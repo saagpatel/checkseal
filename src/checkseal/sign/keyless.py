@@ -51,7 +51,7 @@ def sign_statement_keyless(statement: dict[str, Any], *, identity_token: str | N
     token = raw_token if isinstance(raw_token, IdentityToken) else IdentityToken(raw_token)
 
     ctx = SigningContext.production()
-    from sigstore.dsse import Statement, _StatementBuilder  # noqa: F401
+    from sigstore.dsse import Statement
 
     # sigstore's Statement wraps the same fields; hand it our canonical dict.
     stmt = Statement(json.dumps(statement, sort_keys=True, separators=(",", ":")).encode("utf-8"))

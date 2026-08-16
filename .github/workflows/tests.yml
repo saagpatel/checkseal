@@ -1,0 +1,29 @@
+name: tests
+
+# Runs the Python + JS suites on every push/PR, with the keyless extra installed
+# so the sigstore-API guard (tests/test_keyless_api.py) actually executes. The
+# first public seal broke on a sigstore rename the offline suite never exercised;
+# this makes that class of drift fail here instead of at a live seal run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install with dev + keyless extras
+        run: pip install ".[dev,keyless]"
+      - name: Python suite (incl. keyless API guard)
+        run: python -m pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: JS cross-language verifier suite
+        run: node --test js/checkseal_verify.test.mjs
