@@ -61,8 +61,20 @@ enforced Grade-A checks, (4) resolves `enforced_proof` against HarnessBench with
 a corpus-relevance check, (5) renders `trust_floor`, and (6) treats all sealed
 content as untrusted. See [`DESIGN.md`](DESIGN.md).
 
+## Client-side verification (`/receipts`)
+
+`js/checkseal_verify.mjs` is the honest browser subset: it recomputes the subject
+digest, checks the Statement/predicate subject coupling, verifies the Ed25519
+signature over the DSSE PAE, and renders `trust_floor` — and it states loudly
+what it does NOT check (re-execution, enforced_proof resolution, full Rekor
+proof), which are CLI-only. A Python-signed seal verifies in this JS verifier
+(`node --test js/`), proving the format is language-agnostic.
+
+Public T2 seals are minted in CI: `checkseal seal-keyless` plus
+`.github/workflows/seal.yml` (GitHub OIDC → Fulcio → Rekor).
+
 ## Status
 
-Phases 0-2 complete (format, producer/sealer, verifier CLI). Part of the
-Verification Chain program (HarnessBench + Verification Ledger + CheckSeal on one
-schema). MIT.
+Phases 0-2 complete (format, producer/sealer, verifier CLI); Phase 3 in progress
+(client-side verifier + T2 keyless CI). Part of the Verification Chain program
+(HarnessBench + Verification Ledger + CheckSeal on one schema). MIT.

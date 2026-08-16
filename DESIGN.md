@@ -132,10 +132,15 @@ for its live tier.
   keyless implemented), N1 profile validation.
 - **Phase 2 (done):** verifier CLI implementing all six contract steps,
   including step-4 corpus-relevance; conformance/honesty tests.
-- **Phase 3 (next):** walking skeleton on real artifacts — seal a tool artifact
-  whose enforced check resolves to the shipped `semantic-clean-room` HarnessBench
-  row (proven end to end today via the CLI), plus the essay with its rights-gate
-  rendered honestly; publish + `/receipts` client-side honest-subset check.
+- **Phase 3 (in progress):** the `/receipts` client-side honest-subset verifier
+  is built in JavaScript (`js/checkseal_verify.mjs`) and proven cross-language: a
+  Python-signed seal verifies in the browser/Node verifier, and tamper, wrong-key,
+  and malformed-payload are all caught (`node --test js/`). The T2 keyless path has
+  a CLI (`seal-keyless` / `verify-keyless`) and a GitHub Actions workflow
+  (`.github/workflows/seal.yml`, `id-token: write`) that mints a public seal via
+  OIDC. REMAINING and gated: (i) a public *enforced* seal is blocked until N2 ships
+  `config_sha256`; (ii) sealing the real essay + tool artifacts and wiring the live
+  `/receipts` page + publish are outward-facing and operator-gated.
 - **Phase 4 (later):** VL-backed store extra, C2PA embedding backend, hosted
   verifier, PyPI release, in-toto/C2PA community engagement.
 

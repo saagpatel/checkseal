@@ -1,0 +1,57 @@
+name: checkseal T2 keyless seal
+
+# Mints a public T2 CheckSeal via Sigstore keyless. This is the only path that
+# produces a seal valid for public use: it uses the GitHub Actions OIDC token as
+# the Fulcio identity, so signing is identity-bound with a Rekor transparency-log
+# entry. It cannot run on a dev box without an ambient OIDC credential.
+
+on:
+  workflow_dispatch:
+    inputs:
+      store:
+        description: "Path to the T0 check-results store (JSONL)"
+        required: true
+      subject:
+        description: "Path to the artifact to seal"
+        required: true
+      name:
+        description: "Subject name recorded in the seal"
+        required: true
+      kind:
+        description: "Subject kind"
+        default: artifact
+
+permissions:
+  contents: read
+  id-token: write # REQUIRED: lets the job mint an OIDC token for Fulcio
+
+jobs:
+  seal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install checkseal with the keyless extra
+        run: pip install ".[keyless]"
+      - name: Produce the T2 keyless seal
+        env:
+          # Pass dispatch inputs through the environment (never interpolate
+          # untrusted values directly into the shell command).
+          CS_STORE: ${{ inputs.store }}
+          CS_SUBJECT: ${{ inputs.subject }}
+          CS_NAME: ${{ inputs.name }}
+          CS_KIND: ${{ inputs.kind }}
+        run: |
+          python -m checkseal seal-keyless \
+            --store "$CS_STORE" \
+            --subject "$CS_SUBJECT" \
+            --name "$CS_NAME" \
+            --kind "$CS_KIND" \
+            --out seal.sigstore.json
+      - name: Upload the seal
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkseal-t2-seal
+          path: seal.sigstore.json
