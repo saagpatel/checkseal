@@ -64,10 +64,17 @@ def main() -> None:
         "--report-uri", required=True, help="the URI to record for enforced_proof (repo-relative)"
     )
     ap.add_argument("--as-of", default="2026-08-16", help="YYYY-MM-DD the measurement is stamped with")
-    ap.add_argument("--key", required=True)
-    ap.add_argument("--store", required=True)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--store", required=True, help="the T0 store to populate with the enforced check")
+    # Signing is optional. With --key/--out this T1-signs (the offline demo). Omit
+    # both to only populate the store, so CI can seal-keyless it into a public T2
+    # bundle (the store round-trips the full enforced check, enforced_proof and all).
+    ap.add_argument("--key", help="T1 private key; omit for store-only (CI T2) mode")
+    ap.add_argument("--out", help="T1 seal output; omit for store-only (CI T2) mode")
     args = ap.parse_args()
+    _refuse_unless(
+        bool(args.key) == bool(args.out),
+        "--key and --out must be given together (T1 demo) or both omitted (store-only for CI T2)",
+    )
 
     report = json.load(open(args.report, encoding="utf-8"))
     _refuse_unless(
@@ -124,13 +131,18 @@ def main() -> None:
 
     store = JsonlSealStore(args.store)
     store.append(CheckResult(subject, gate))
-    predicate = assemble(store, subject)
-    signer = load_private_signer(args.key)
-    seal = sign_local(predicate, signer, public=False)
-    with open(args.out, "w", encoding="utf-8") as fh:
-        fh.write(seal.to_intoto_jsonl() + "\n")
 
-    print(f"sealed 1 enforced check for {subject.name} -> {args.out}")
+    if args.key:
+        predicate = assemble(store, subject)
+        signer = load_private_signer(args.key)
+        seal = sign_local(predicate, signer, public=False)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(seal.to_intoto_jsonl() + "\n")
+        print(f"sealed 1 enforced check for {subject.name} (T1) -> {args.out}")
+    else:
+        print(f"populated store with 1 enforced check for {subject.name} -> {args.store}")
+        print(f"  next: checkseal seal-keyless --store {args.store} --subject {args.subject} \\")
+        print(f"        --name {args.name} --kind harness_config --out harness-config.sigstore.json")
     print(f"  subject (config) sha256 : {subject_digest}")
     print(f"  == report config_sha256 : {config_sha}")
     print(f"  enforced_proof report   : {report_digest[:16]}...  threat_class={threat_class}  ees={ees}")

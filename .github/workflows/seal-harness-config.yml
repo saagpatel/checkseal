@@ -1,0 +1,74 @@
+name: checkseal T2 enforced seal (harness config)
+
+# Mints the PUBLIC, identity-bound T2 CheckSeal for the enforced harness-config
+# example: the first enforced seal, signed keyless via Sigstore so it carries a
+# Fulcio identity and a Rekor transparency-log entry. The offline demo
+# (examples/seal_harness_config.py with --key/--out) produces only a T1 seal;
+# this is the tier valid for public use.
+#
+# It rebuilds the T0 store deterministically from the vendored config manifest +
+# HarnessBench report (the producer refuses unless the report enforces and the
+# manifest IS the config it measured), then seal-keyless signs it.
+#
+# NOTE: the seal's enforced_proof cites the vendored report by repo-relative path.
+# A CLI verifier resolves it with --proof-root <repo root>. For the proof to be
+# resolvable by a third party off-repo, the same report must be reachable at that
+# path wherever the seal is published.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # REQUIRED: mint an OIDC token for Fulcio keyless signing
+
+env:
+  SUBJECT: examples/artifacts/harnessbench-semantic-clean-room.config-manifest.json
+  REPORT: examples/artifacts/harnessbench-semantic-clean-room.v1.json
+  NAME: harnessbench-semantic-clean-room
+
+jobs:
+  seal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install checkseal with the keyless extra
+        run: pip install ".[keyless]"
+
+      - name: Build the T0 store (enforced check), store-only
+        run: |
+          python examples/seal_harness_config.py \
+            --subject "$SUBJECT" \
+            --report "$REPORT" \
+            --report-uri "$REPORT" \
+            --store hc.jsonl
+
+      - name: Mint the public T2 keyless seal
+        run: |
+          python -m checkseal seal-keyless \
+            --store hc.jsonl \
+            --subject "$SUBJECT" \
+            --name "$NAME" \
+            --kind harness_config \
+            --out harness-config.sigstore.json
+
+      - name: Self-verify the bundle (full Verifier Contract)
+        env:
+          # The Fulcio SAN for a GitHub Actions workflow is the workflow ref.
+          EXPECTED_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/seal-harness-config.yml@${{ github.ref }}
+          EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          python -m checkseal verify-keyless harness-config.sigstore.json \
+            --subject "$SUBJECT" \
+            --identity "$EXPECTED_IDENTITY" \
+            --issuer "$EXPECTED_ISSUER" \
+            --proof-root .
+
+      - name: Upload the T2 seal
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-config-t2-seal
+          path: harness-config.sigstore.json
