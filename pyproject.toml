@@ -30,6 +30,7 @@ checkseal = "checkseal.__main__:main"
 
 [project.urls]
 Homepage = "https://saagarpatel.dev"
+Repository = "https://github.com/saagpatel/checkseal"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/checkseal"]
