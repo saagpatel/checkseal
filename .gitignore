@@ -10,3 +10,7 @@ venv/
 *.pem
 *.intoto.jsonl
 *.sigstore.json
+
+# ...but the worked example's demo seal + its PUBLIC verify key are committed.
+!examples/artifacts/*.intoto.jsonl
+!examples/artifacts/field-manual.verify-key.pem

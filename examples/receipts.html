@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CheckSeal receipt — preview</title>
+    <style>
+      :root { --ink: #e8e6e1; --dim: #9a978f; --mint: #74e2c0; --bg: #12130f; --card: #1b1c17; --line: #2c2e26; }
+      body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 ui-sans-serif, system-ui, "Hanken Grotesk", sans-serif; }
+      main { max-width: 760px; margin: 0 auto; padding: 48px 20px 80px; }
+      h1 { font-weight: 600; letter-spacing: -0.01em; }
+      .dim { color: var(--dim); }
+      code, .mono { font-family: ui-monospace, "IBM Plex Mono", monospace; font-size: 0.86em; }
+      .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin: 20px 0; }
+      .check { border-top: 1px solid var(--line); padding: 12px 0; }
+      .check:first-of-type { border-top: 0; }
+      .floor { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); }
+      .f2 { color: var(--mint); border-color: var(--mint); }
+      .f1 { color: var(--ink); }
+      .f0 { color: var(--dim); }
+      .verdict { font-weight: 600; }
+      .ok { color: var(--mint); }
+      .no { color: #e2748a; }
+      .note { font-size: 13px; color: var(--dim); }
+      ul { margin: 6px 0; padding-left: 18px; }
+      input[type=file] { color: var(--dim); font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Check receipt <span class="dim">— preview</span></h1>
+      <p class="dim">
+        A CheckSeal asserts which verification checks an artifact passed and how strongly each binds.
+        This page verifies the seal <em>in your browser</em>: signature, subject coupling, and
+        <span class="mono">trust_floor</span>. It states plainly what it cannot check here.
+      </p>
+
+      <div class="card" id="card">Loading seal…</div>
+
+      <p class="note">
+        Verify the live subject digest by selecting the sealed artifact:
+        <input type="file" id="artifact" />
+      </p>
+
+      <p class="note" id="notchecked"></p>
+    </main>
+
+    <script type="module">
+      import { verifySeal } from "../js/checkseal_verify.mjs";
+
+      const SEAL_URL = "./artifacts/field-manual.intoto.jsonl";
+      const KEY_URL = "./artifacts/field-manual.verify-key.pem";
+
+      // Decode a PEM SubjectPublicKeyInfo Ed25519 key to the 32-byte raw key.
+      function pemToRaw(pem) {
+        const b64 = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+        const der = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        return der.slice(der.length - 32); // raw key is the trailing 32 bytes of the SPKI
+      }
+
+      let envelope, keyRaw;
+      let artifactBytes = null;
+
+      async function load() {
+        const sealText = await (await fetch(SEAL_URL)).text();
+        envelope = JSON.parse(sealText.trim().split("\n")[0]);
+        keyRaw = pemToRaw(await (await fetch(KEY_URL)).text());
+        await run();
+      }
+
+      function floorClass(f) { return f === 2 ? "f2" : f === 1 ? "f1" : "f0"; }
+
+      async function run() {
+        const r = await verifySeal({ envelope, artifactBytes, publicKeyRaw: keyRaw });
+        const rows = r.entries
+          .map(
+            (e) => `<div class="check"><strong>${e.checkId}</strong>
+              <span class="floor ${floorClass(e.trustFloor)}">trust_floor: ${e.trustFloorLabel}</span>
+              <div class="note">result: ${e.result} · binding: ${e.enforced}</div></div>`
+          )
+          .join("");
+        const subj = r.subjectDigestOk
+          ? `<span class="ok">subject digest verified</span>`
+          : `<span class="dim">subject digest: ${r.subjectReason}</span>`;
+        document.getElementById("card").innerHTML = `
+          <div class="note">signature: ${r.signatureOk ? '<span class="ok">valid</span>' : '<span class="no">invalid</span>'}
+            · coupling: ${r.subjectCoupled ? "ok" : "MISMATCH"} · ${subj}</div>
+          ${rows}
+          <p class="verdict">browser-checkable subset:
+            <span class="${r.authenticSubset ? "ok" : "no"}">${r.authenticSubset ? "PASS" : "INCOMPLETE"}</span></p>`;
+        document.getElementById("notchecked").innerHTML =
+          "Not checked in the browser (run the CheckSeal CLI for the full contract): " +
+          r.notChecked.join("; ") + ".";
+      }
+
+      document.getElementById("artifact").addEventListener("change", async (ev) => {
+        const f = ev.target.files[0];
+        if (f) { artifactBytes = new Uint8Array(await f.arrayBuffer()); await run(); }
+      });
+
+      load().catch((e) => (document.getElementById("card").textContent = "Failed to load seal: " + e.message));
+    </script>
+  </body>
+</html>
