@@ -112,16 +112,21 @@ export async function verifySeal({ envelope, artifactBytes, publicKeyRaw }) {
   let signatureOk = false;
   let signatureReason = "no Ed25519 public key supplied";
   if (publicKeyRaw) {
-    const key = await subtle.importKey("raw", publicKeyRaw, { name: "Ed25519" }, false, ["verify"]);
-    const signed = pae(envelope.payloadType, payload);
-    for (const sig of envelope.signatures || []) {
-      const ok = await subtle.verify({ name: "Ed25519" }, key, b64ToBytes(sig.sig), signed);
-      if (ok) {
-        signatureOk = true;
-        signatureReason = "Ed25519 signature valid over DSSE PAE";
-        break;
+    try {
+      const key = await subtle.importKey("raw", publicKeyRaw, { name: "Ed25519" }, false, ["verify"]);
+      const signed = pae(envelope.payloadType, payload);
+      for (const sig of envelope.signatures || []) {
+        const ok = await subtle.verify({ name: "Ed25519" }, key, b64ToBytes(sig.sig), signed);
+        if (ok) {
+          signatureOk = true;
+          signatureReason = "Ed25519 signature valid over DSSE PAE";
+          break;
+        }
+        signatureReason = "Ed25519 signature did not verify under the supplied key";
       }
-      signatureReason = "Ed25519 signature did not verify under the supplied key";
+    } catch (err) {
+      // Older browsers lack WebCrypto Ed25519; degrade honestly, never throw.
+      signatureReason = `Ed25519 unavailable in this browser (${err.name}); verify with the CLI`;
     }
   }
 
