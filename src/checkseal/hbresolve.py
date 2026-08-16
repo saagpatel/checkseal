@@ -7,13 +7,16 @@ unproven (corpus mismatch)". A destructive-execution corpus does NOT prove a
 content rights-gate; treating it as if it did is exactly the over-claim
 CheckSeal exists to prevent.
 
-Two asks of HarnessBench (N2) make this a strong, cryptographic binding rather
-than a name-and-class binding (see DESIGN.md CONTRACT-DELTA):
+The corpus/class match is defense-in-depth only: ``check.id`` (and the class
+derived from it) is producer-controlled, so a name match is forgeable. The
+security boundary is a cryptographic one: resolution requires the HarnessBench
+report to declare a ``config_sha256`` equal to the seal's ``check.config_ref``,
+so the producer must exhibit a report that measured THIS exact config. Two asks
+of HarnessBench (N2) make that possible (see DESIGN.md CONTRACT-DELTA):
   (a) declare ``threat_class`` on each report;
-  (b) declare the subject config's ``config_sha256`` on each report,
-      so a check's ``config_ref.sha256`` binds to a specific measured config.
-Until then this resolver infers the class from the corpus name and binds by
-subject name, and says so in the reason string.
+  (b) declare the subject config's ``config_sha256`` on each report.
+Until HB ships (b), NOTHING resolves, and the verifier renders "gate unproven
+(weak binding)" rather than trusting a forgeable name match.
 """
 
 from __future__ import annotations
@@ -25,6 +28,9 @@ from typing import Any
 
 from .digest import sha256_hex
 from .model import CheckEntry, EnforcedProof
+
+# Enforcement-efficacy floor: an enforced verdict below this EES is not a proof.
+EES_FLOOR = 0.5
 
 # A report loader takes a URI and returns raw bytes. Injectable for tests and to
 # keep the verifier offline-first (default handles local paths and file://).
@@ -89,16 +95,17 @@ def resolve_enforced_proof(
 
     schema = str(report.get("schema", ""))
     if not schema.startswith("harnessbench-report/"):
-        return ProofResolution(
-            False, f"gate unproven: not a HarnessBench report (schema={schema!r})"
-        )
+        return ProofResolution(False, f"gate unproven: not a HarnessBench report (schema={schema!r})")
 
     corpus = str(report.get("corpus", ""))
     threat_class = report.get("threat_class") or _infer_threat_class(corpus)
     check_class = _check_threat_class(entry)
     ees = report.get("ees")
-    ees_f = float(ees) if isinstance(ees, (int, float)) else None
+    ees_f = float(ees) if isinstance(ees, (int, float)) and not isinstance(ees, bool) else None
 
+    # Necessary (not sufficient): the corpus threat class must cover the check.
+    # NOTE: check_class is derived from the producer-controlled check.id, so this
+    # match is forgeable on its own. It is defense-in-depth, not the boundary.
     if threat_class != check_class:
         return ProofResolution(
             False,
@@ -108,6 +115,7 @@ def resolve_enforced_proof(
             ees=ees_f,
         )
 
+    # The measured config must enforce, not merely advise.
     verdicts = report.get("verdicts", {})
     enforced = int(verdicts.get("enforced", 0)) if isinstance(verdicts, dict) else 0
     advised = int(verdicts.get("advised", 0)) if isinstance(verdicts, dict) else 0
@@ -120,21 +128,51 @@ def resolve_enforced_proof(
             ees=ees_f,
         )
 
-    # Optional strong binding: config sha declared by HB and matching the check.
+    # Enforcement efficacy floor: an enforced verdict on a barely-effective config
+    # is not a proof. EES is HarnessBench's headline metric; require it and a floor.
+    if ees_f is None or ees_f < EES_FLOOR:
+        return ProofResolution(
+            False,
+            f"gate unproven: enforcement-efficacy score {ees_f} below floor {EES_FLOOR}",
+            corpus=corpus,
+            threat_class=threat_class,
+            ees=ees_f,
+        )
+
+    # THE SECURITY BOUNDARY. check.id and the derived threat class are all
+    # producer-controlled, so a name/class match is forgeable (rename the check
+    # and any corpus "covers" it). The only unforgeable binding is a config_sha256
+    # declared by HarnessBench equal to the seal's check.config_ref: to resolve,
+    # the producer must exhibit an HB report that measured THIS exact config. Until
+    # HB declares config_sha256 (CONTRACT-DELTA ask b), nothing resolves, and the
+    # verifier renders "gate unproven" rather than trusting a forgeable name match.
     declared_sha = report.get("config_sha256")
     strong = bool(
-        declared_sha and entry.check.config_ref and declared_sha == entry.check.config_ref
+        isinstance(declared_sha, str)
+        and entry.check.config_ref is not None
+        and declared_sha == entry.check.config_ref
     )
-    binding_note = (
-        "config-sha bound"
-        if strong
-        else "name-bound (HB config_sha256 not declared; see CONTRACT-DELTA)"
-    )
+    if not strong:
+        why = (
+            "HB report declares no config_sha256"
+            if not isinstance(declared_sha, str)
+            else "config_sha256 does not match check.config_ref"
+        )
+        return ProofResolution(
+            False,
+            f"gate unproven (weak binding): {why}; resolution requires config_sha256 == "
+            "check.config_ref (see CONTRACT-DELTA ask b)",
+            corpus=corpus,
+            threat_class=threat_class,
+            ees=ees_f,
+            strong_binding=False,
+        )
+
     return ProofResolution(
         True,
-        f"enforced_proof resolved: corpus {corpus!r} covers {check_class!r}, ees={ees_f}, {binding_note}",
+        f"enforced_proof resolved: config_sha256 bound, corpus {corpus!r} covers {check_class!r}, ees={ees_f}",
         corpus=corpus,
         threat_class=threat_class,
         ees=ees_f,
-        strong_binding=strong,
+        strong_binding=True,
     )

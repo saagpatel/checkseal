@@ -74,11 +74,7 @@ class Envelope:
             _require(bool(sig), f"signatures[{i}].sig: empty")
             keyid = rs.get("keyid")
             cert = rs.get("cert")
-            sigs.append(
-                Signature(
-                    sig=sig,
-                    keyid=keyid if isinstance(keyid, str) else None,
-                    cert=cert if isinstance(cert, str) else None,
-                )
-            )
+            _require(keyid is None or isinstance(keyid, str), f"signatures[{i}].keyid: must be a string")
+            _require(cert is None or isinstance(cert, str), f"signatures[{i}].cert: must be a string")
+            sigs.append(Signature(sig=sig, keyid=keyid, cert=cert))
         return Envelope(payload=payload, payload_type=pt, signatures=sigs)

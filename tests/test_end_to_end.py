@@ -42,13 +42,12 @@ def _seal_two_checks(tmp_path, signer, proof):
 
 
 def test_seal_and_verify_happy_path(tmp_path, local_signer):
-    from checkseal.sign.local import LocalKeyVerifier
     from checkseal.verify import verify_local_seal
 
     proof = write_hb_report(tmp_path / "hb.json")
     subject_file, seal_path = _seal_two_checks(tmp_path, local_signer, proof)
 
-    verifier = LocalKeyVerifier(local_signer._key.public_key())
+    verifier = local_signer.verifier()
     report = verify_local_seal(
         str(seal_path),
         verifier,
@@ -64,7 +63,6 @@ def test_seal_and_verify_happy_path(tmp_path, local_signer):
 
 
 def test_tampered_subject_is_caught(tmp_path, local_signer):
-    from checkseal.sign.local import LocalKeyVerifier
     from checkseal.verify import verify_local_seal
 
     proof = write_hb_report(tmp_path / "hb.json")
@@ -72,7 +70,7 @@ def test_tampered_subject_is_caught(tmp_path, local_signer):
     tampered = tmp_path / "tampered.txt"
     tampered.write_bytes(b"a different artifact")
 
-    verifier = LocalKeyVerifier(local_signer._key.public_key())
+    verifier = local_signer.verifier()
     report = verify_local_seal(
         str(seal_path), verifier, subject_path=str(tampered), reexecutor=lambda _e: True
     )
@@ -81,7 +79,7 @@ def test_tampered_subject_is_caught(tmp_path, local_signer):
 
 
 def test_wrong_key_fails_signature(tmp_path, local_signer):
-    from checkseal.sign.local import LocalKeySigner, LocalKeyVerifier
+    from checkseal.sign.local import LocalKeySigner
     from checkseal.verify import verify_local_seal
 
     proof = write_hb_report(tmp_path / "hb.json")
@@ -90,7 +88,7 @@ def test_wrong_key_fails_signature(tmp_path, local_signer):
     other = LocalKeySigner.generate()
     report = verify_local_seal(
         str(seal_path),
-        LocalKeyVerifier(other._key.public_key()),
+        other.verifier(),
         subject_path=str(subject_file),
         reexecutor=lambda _e: True,
     )
@@ -99,7 +97,6 @@ def test_wrong_key_fails_signature(tmp_path, local_signer):
 
 
 def test_enforced_grade_a_without_reexecutor_is_not_trusted(tmp_path, local_signer):
-    from checkseal.sign.local import LocalKeyVerifier
     from checkseal.verify import verify_local_seal
 
     proof = write_hb_report(tmp_path / "hb.json")
@@ -107,7 +104,7 @@ def test_enforced_grade_a_without_reexecutor_is_not_trusted(tmp_path, local_sign
 
     report = verify_local_seal(
         str(seal_path),
-        LocalKeyVerifier(local_signer._key.public_key()),
+        local_signer.verifier(),
         subject_path=str(subject_file),
         reexecutor=None,  # no re-execution supplied
     )

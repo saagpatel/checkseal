@@ -105,11 +105,12 @@ class JsonlSealStore(SealStore):
 
     def read_for_subject(self, subject_digest: str) -> list[CheckEntry]:
         """Every check entry whose subject digest matches (many checks / one subject)."""
-        return [
-            row.result().entry
-            for row in self.read()
-            if row.result().subject.digest == subject_digest
-        ]
+        out: list[CheckEntry] = []
+        for row in self.read():
+            res = row.result()  # parse each row once
+            if res.subject.digest == subject_digest:
+                out.append(res.entry)
+        return out
 
     def _next_id(self) -> int:
         rows = self.read()

@@ -52,6 +52,14 @@ class LocalKeySigner(Signer):
     def keyid(self) -> str:
         return self._keyid
 
+    @property
+    def public_key(self) -> "Ed25519PublicKey":
+        return self._key.public_key()
+
+    def verifier(self) -> "LocalKeyVerifier":
+        """The matching verifier for this signer (avoids private-key reach-through)."""
+        return LocalKeyVerifier(self._key.public_key())
+
     def sign(self, data: bytes) -> Signature:
         return Signature(sig=self._key.sign(data), keyid=self._keyid)
 

@@ -52,7 +52,6 @@ def test_config_that_only_advises_is_unproven(tmp_path):
 
 def test_full_verify_rejects_the_over_claim(tmp_path, local_signer):
     """End to end: a sealed, correctly-signed over-claim still fails verify."""
-    from checkseal.sign.local import LocalKeyVerifier
     from checkseal.verify import verify_local_seal
 
     content = b"an essay claiming a rights-gate it cannot prove"
@@ -71,7 +70,7 @@ def test_full_verify_rejects_the_over_claim(tmp_path, local_signer):
 
     report = verify_local_seal(
         str(seal_path),
-        LocalKeyVerifier(local_signer._key.public_key()),
+        local_signer.verifier(),
         subject_path=str(subject_file),
         reexecutor=lambda _e: True,  # even with re-execution "confirmed"...
     )

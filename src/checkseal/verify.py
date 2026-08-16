@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from .digest import sha256_file, sha256_hex
 from .dsse import PAYLOAD_TYPE, Envelope, pae
 from .hbresolve import ReportLoader, default_report_loader, resolve_enforced_proof
-from .model import CheckEntry, Enforced, Grade, Predicate, VCRError
+from .model import Authority, CheckEntry, Enforced, Grade, Predicate, Result, VCRError
 from .sign.base import Identity, SignatureVerifier, SigningTier
 from .statement import parse_statement
 from .trust import check_invariant_e1, render_trust_floor, trust_floor
@@ -40,7 +40,12 @@ class EntryFinding:
     trust_floor_label: str
     reexecution: str  # confirmed | not-applicable | not-run | FAILED
     enforced_proof: str
-    ok: bool
+    trusted: bool  # authenticity: E1 + re-exec + proof + grade-C authority hold
+    result_ok: bool  # the check's own verdict did not report a failure
+
+    @property
+    def ok(self) -> bool:
+        return self.trusted and self.result_ok
 
 
 @dataclass
@@ -52,11 +57,27 @@ class VerificationReport:
     signature_reason: str
     identity: str | None
     freshness_reason: str
+    freshness_ok: bool = True
     entries: list[EntryFinding] = field(default_factory=list)
 
     @property
+    def authentic(self) -> bool:
+        """The seal's assertions are trustworthy: signed, digest-bound, fresh, verified."""
+        return (
+            self.subject_digest_ok
+            and self.signature_ok
+            and self.freshness_ok
+            and all(e.trusted for e in self.entries)
+        )
+
+    @property
+    def checks_passed(self) -> bool:
+        """Every check reported a passing result (no fail/error/over_blocked)."""
+        return all(e.result_ok for e in self.entries)
+
+    @property
     def ok(self) -> bool:
-        return self.subject_digest_ok and self.signature_ok and all(e.ok for e in self.entries)
+        return self.authentic and self.checks_passed
 
     def render(self) -> str:
         lines = [
@@ -64,14 +85,19 @@ class VerificationReport:
             f"[1] subject digest: {'OK' if self.subject_digest_ok else 'MISMATCH'} - {self.subject_reason}",
             f"    signature:      {'OK' if self.signature_ok else 'INVALID'} - {self.signature_reason}"
             + (f" ({self.identity})" if self.identity else ""),
-            f"[2] freshness:      {self.freshness_reason}",
+            f"[2] freshness:      {'OK' if self.freshness_ok else 'FAILED'} - {self.freshness_reason}",
         ]
         for e in self.entries:
+            flag = "ok" if e.ok else ("check FAILED" if not e.result_ok else "UNTRUSTED")
             lines.append(
-                f"  - {e.check_id}: result={e.result} floor={e.trust_floor} ({e.trust_floor_label})"
+                f"  - {e.check_id}: result={e.result} floor={e.trust_floor} ({e.trust_floor_label}) [{flag}]"
             )
             lines.append(f"      [3] re-exec: {e.reexecution}")
             lines.append(f"      [4] proof:   {e.enforced_proof}")
+        lines.append(
+            f"authentic: {'yes' if self.authentic else 'NO'}  |  "
+            f"checks passed: {'yes' if self.checks_passed else 'NO'}"
+        )
         lines.append(f"VERDICT: {'PASS' if self.ok else 'FAIL'}")
         return "\n".join(lines)
 
@@ -83,12 +109,11 @@ def load_envelope(seal_path: str) -> Envelope:
     return Envelope.from_jsonable(json.loads(first))
 
 
-def _statement_from_envelope(env: Envelope) -> tuple[dict, Predicate]:
+def _predicate_from_envelope(env: Envelope) -> Predicate:
     if env.payload_type != PAYLOAD_TYPE:
         raise VCRError(f"unexpected DSSE payloadType {env.payload_type!r}")
     statement = json.loads(env.payload.decode("utf-8"))
-    predicate = parse_statement(statement)  # step 6: untrusted, validated
-    return statement, predicate
+    return parse_statement(statement)  # step 6: untrusted, validated
 
 
 def _check_subject(
@@ -99,9 +124,7 @@ def _check_subject(
             False,
             "no live subject provided; a seal verified in isolation proves a past state, not the served one",
         )
-    live = (
-        sha256_file(subject_path) if subject_path is not None else sha256_hex(subject_bytes or b"")
-    )
+    live = sha256_file(subject_path) if subject_path is not None else sha256_hex(subject_bytes or b"")
     if live == predicate.subject.digest:
         return True, f"live digest matches ({live[:12]}...)"
     return False, f"live digest {live[:12]}... != sealed {predicate.subject.digest[:12]}..."
@@ -116,7 +139,8 @@ def _verify_entries(
 ) -> list[EntryFinding]:
     findings: list[EntryFinding] = []
     for entry in predicate.checks:
-        ok = True
+        trusted = True
+        result_ok = entry.verdict.result not in (Result.FAIL, Result.ERROR, Result.OVER_BLOCKED)
 
         # E1 is a hard structural invariant.
         try:
@@ -130,34 +154,36 @@ def _verify_entries(
         if entry.verdict.enforced is Enforced.ENFORCED and entry.evidence.grade is Grade.A:
             if reexecutor is None:
                 reexec = "not-run (no re-executor supplied; run the CLI with --reexec)"
-                ok = False
+                trusted = False
             else:
                 try:
                     reexec = "confirmed" if reexecutor(entry) else "FAILED"
                 except Exception as exc:  # a re-executor error is a failed confirmation
                     reexec = f"FAILED ({exc})"
                 if reexec != "confirmed":
-                    ok = False
+                    trusted = False
         elif entry.verdict.enforced is Enforced.ENFORCED and entry.evidence.grade is Grade.B:
-            reexec = (
-                "producer-trusted (Grade-B immutable artifact; check<->evidence binding not re-run)"
-            )
+            reexec = "producer-trusted (Grade-B immutable artifact; check<->evidence binding not re-run)"
 
         # Step 4: resolve enforced_proof or render gate unproven.
         if entry.verdict.enforced_proof is not None:
             res = resolve_enforced_proof(entry, entry.verdict.enforced_proof, loader=loader)
             proof = res.reason
             if not res.resolved:
-                ok = False
+                trusted = False
         elif entry.verdict.enforced is Enforced.ENFORCED:
             proof = "gate unproven: enforced verdict with no enforced_proof"
-            ok = False
+            trusted = False
         else:
             proof = "n/a (not an enforced verdict)"
 
         # Grade C on a public/attested seal needs operator attestation to stand.
-        if entry.evidence.grade is Grade.C and not attested_authority:
-            proof += " | grade-C evidence but signer is not identity-attested"
+        if entry.evidence.grade is Grade.C:
+            if entry.provenance.authority is not Authority.OPERATOR:
+                proof += " | grade-C evidence requires operator authority (profile rule)"
+                trusted = False
+            if not attested_authority:
+                proof += " | grade-C on a non-identity-attested seal"
 
         findings.append(
             EntryFinding(
@@ -168,7 +194,8 @@ def _verify_entries(
                 trust_floor_label=render_trust_floor(entry),
                 reexecution=reexec,
                 enforced_proof=proof,
-                ok=ok,
+                trusted=trusted,
+                result_ok=result_ok,
             )
         )
     return findings
@@ -183,7 +210,8 @@ def _fail_finding(entry: CheckEntry, reason: str) -> EntryFinding:
         trust_floor_label=render_trust_floor(entry),
         reexecution="not-run",
         enforced_proof=reason,
-        ok=False,
+        trusted=False,
+        result_ok=entry.verdict.result not in (Result.FAIL, Result.ERROR, Result.OVER_BLOCKED),
     )
 
 
@@ -198,7 +226,7 @@ def verify_local_seal(
 ) -> VerificationReport:
     """Verify a T0/T1 .intoto.jsonl seal. Step 2 (Rekor) is N/A for local tiers."""
     env = load_envelope(seal_path)
-    statement, predicate = _statement_from_envelope(env)
+    predicate = _predicate_from_envelope(env)
 
     subject_ok, subject_reason = _check_subject(
         predicate, subject_path=subject_path, subject_bytes=subject_bytes
@@ -267,11 +295,9 @@ def verify_keyless_seal(
     subject_ok, subject_reason = _check_subject(
         predicate, subject_path=subject_path, subject_bytes=subject_bytes
     )
-    freshness_reason = _freshness(bundle_json, max_age_seconds=max_age_seconds, now=now)
+    freshness_ok, freshness_reason = _freshness(bundle_json, max_age_seconds=max_age_seconds, now=now)
 
-    entries = _verify_entries(
-        predicate, reexecutor=reexecutor, loader=loader, attested_authority=True
-    )
+    entries = _verify_entries(predicate, reexecutor=reexecutor, loader=loader, attested_authority=True)
     return VerificationReport(
         tier=SigningTier.T2.value,
         subject_digest_ok=subject_ok,
@@ -280,24 +306,31 @@ def verify_keyless_seal(
         signature_reason="Sigstore keyless verified (cert chain + Rekor inclusion)",
         identity=identity.subject,
         freshness_reason=freshness_reason,
+        freshness_ok=freshness_ok,
         entries=entries,
     )
 
 
-def _freshness(bundle_json: str, *, max_age_seconds: int | None, now: float | None) -> str:
+def _freshness(bundle_json: str, *, max_age_seconds: int | None, now: float | None) -> tuple[bool, str]:
+    """Return (ok, reason). A requested bound that cannot be evaluated fails closed."""
     if max_age_seconds is None:
-        return "Rekor inclusion verified; no freshness bound requested"
+        return True, "Rekor inclusion verified; no freshness bound requested"
     try:
         bundle = json.loads(bundle_json)
         # Rekor integratedTime lives in the bundle's verification material.
         tlog = bundle.get("verificationMaterial", {}).get("tlogEntries", [{}])
         integrated = int(tlog[0].get("integratedTime", 0))
     except (json.JSONDecodeError, KeyError, IndexError, ValueError, TypeError):
-        return "could not read Rekor integratedTime for freshness bound"
+        return False, "freshness bound requested but Rekor integratedTime is unreadable (fail closed)"
+    if integrated <= 0:
+        return False, "freshness bound requested but Rekor integratedTime is absent (fail closed)"
     import time as _time
 
     current = now if now is not None else _time.time()
     age = current - integrated
     if age <= max_age_seconds:
-        return f"fresh: signed {int(age)}s ago, within {max_age_seconds}s (not-after bound; not-before unprovable)"
-    return f"STALE: signed {int(age)}s ago, exceeds {max_age_seconds}s bound"
+        return (
+            True,
+            f"fresh: signed {int(age)}s ago, within {max_age_seconds}s (not-after bound; not-before unprovable)",
+        )
+    return False, f"STALE: signed {int(age)}s ago, exceeds {max_age_seconds}s bound"

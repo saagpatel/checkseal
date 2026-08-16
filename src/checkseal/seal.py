@@ -10,6 +10,7 @@ current truth per check.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from .dsse import PAYLOAD_TYPE, Envelope
 from .model import Predicate, Subject, VCRError
@@ -32,7 +33,7 @@ class Seal:
     """A signed seal, in one of two on-disk forms."""
 
     tier: SigningTier
-    statement: dict
+    statement: dict[str, Any]
     envelope: Envelope | None = None  # T0/T1 -> .intoto.jsonl
     bundle_json: str | None = None  # T2 -> .sigstore.json
 

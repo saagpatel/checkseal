@@ -56,18 +56,8 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     from .sign.local import load_public_verifier
 
     verifier = load_public_verifier(args.pubkey)
-
-    reexecutor = None
-    if args.reexec_ok:
-        reexecutor = lambda _entry: True  # noqa: E731 - test/demo confirmer
-
-    loader = default_report_loader
-    if args.proof_root:
-        root = args.proof_root.rstrip("/")
-
-        def loader(uri: str) -> bytes:  # noqa: F811 - rebind for rooted proofs
-            path = uri if uri.startswith("/") else f"{root}/{uri}"
-            return default_report_loader(path)
+    reexecutor = _build_reexecutor(args.reexec) if args.reexec else None
+    loader = _build_loader(args.proof_root)
 
     report = verify_local_seal(
         args.seal,
@@ -80,10 +70,51 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if report.ok else 1
 
 
+def _build_reexecutor(command: str):
+    """Real re-executor: run COMMAND for each enforced Grade-A check; exit 0 = confirmed.
+
+    The check id and config_ref are passed in the environment so COMMAND can
+    re-run the actual gate. There is deliberately no stub that always confirms.
+    """
+    import os
+    import shlex
+    import subprocess
+
+    argv = shlex.split(command)
+
+    def reexecute(entry) -> bool:
+        env = {
+            **os.environ,
+            "CHECKSEAL_CHECK_ID": entry.check.id,
+            "CHECKSEAL_CONFIG_REF": entry.check.config_ref or "",
+        }
+        return subprocess.run(argv, env=env, capture_output=True).returncode == 0
+
+    return reexecute
+
+
+def _build_loader(proof_root: str | None):
+    if not proof_root:
+        return default_report_loader
+
+    import os
+
+    from .hbresolve import ProofError
+
+    root = os.path.realpath(proof_root)
+
+    def loader(uri: str) -> bytes:
+        cand = uri[len("file://") :] if uri.startswith("file://") else uri
+        full = os.path.realpath(cand if os.path.isabs(cand) else os.path.join(root, cand))
+        if full != root and not full.startswith(root + os.sep):
+            raise ProofError(f"enforced_proof path escapes --proof-root: {uri!r}")
+        return default_report_loader(full)
+
+    return loader
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="checkseal", description="emit and verify AI-artifact check receipts"
-    )
+    p = argparse.ArgumentParser(prog="checkseal", description="emit and verify AI-artifact check receipts")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     kg = sub.add_parser("keygen", help="generate a T1 local Ed25519 key")
@@ -106,9 +137,13 @@ def build_parser() -> argparse.ArgumentParser:
     vf.add_argument("--subject", required=True, help="path to the live artifact")
     vf.add_argument("--pubkey", required=True)
     vf.add_argument(
-        "--reexec-ok", action="store_true", help="stub re-executor that confirms (tests/demo)"
+        "--reexec",
+        default=None,
+        metavar="CMD",
+        help="command to re-run each enforced Grade-A gate; exit 0 = confirmed "
+        "(CHECKSEAL_CHECK_ID / CHECKSEAL_CONFIG_REF in env)",
     )
-    vf.add_argument("--proof-root", default=None, help="resolve enforced_proof URIs under this dir")
+    vf.add_argument("--proof-root", default=None, help="resolve enforced_proof URIs confined under this dir")
     vf.set_defaults(func=_cmd_verify)
     return p
 

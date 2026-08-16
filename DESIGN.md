@@ -83,15 +83,23 @@ gate HarnessBench never tested — the exact signed-lie failure mode CheckSeal
 exists to prevent. This is implemented in `hbresolve.py` and locked by
 `tests/test_honesty.py`.
 
-Two concrete asks of HarnessBench (N2) turn a name-and-class binding into a
-strong cryptographic one (both optional, both degrade gracefully today):
-1. Declare `threat_class` on each report (the semantic class the corpus tests).
-2. Declare the subject config's `config_sha256` on each report, so a check's
-   `config_ref.sha256` binds to a specific measured config, not just a name.
+A name/class match is not enough on its own, and this is the sharp point: the
+check's threat class is derived from `check.id`, which is producer-controlled, so
+a producer can rename a check to make any corpus "cover" it. The only unforgeable
+binding is a cryptographic one, so `resolve_enforced_proof` requires:
 
-Until then the resolver infers the class from the corpus name
-(`asi05-destructive-execution` → `destructive-execution`) and binds by subject
-name, and says so in the verifier output ("name-bound … see CONTRACT-DELTA").
+1. Declare `threat_class` on each report (defense-in-depth; the semantic class
+   the corpus tests).
+2. **Declare the subject config's `config_sha256` on each report** — this is a
+   hard precondition, not a nicety. Resolution requires the report's
+   `config_sha256` to equal the seal's `check.config_ref`, so a producer must
+   exhibit a HarnessBench report that measured THIS exact config.
+
+Until HarnessBench ships (2), **nothing resolves**: the verifier renders "gate
+unproven (weak binding)" and a public enforced seal cannot pass. That is the
+honest current state, and it is a concrete N2 dependency for Phase 3, not a
+cosmetic note. The rename attack and the weak-binding refusal are locked by
+`tests/test_propagation.py`.
 
 ## Modeling choices I own (flagged, not core-schema changes)
 
@@ -141,7 +149,26 @@ is reserved so the manifest lands later without a breaking change.
 
 ## Verification status
 
-`cryptography` present, `sigstore` absent (T2 is CI-exercised). 23 tests pass.
-CLI walking-skeleton demo verifies green against the **real shipped**
-`semantic-clean-room.v1.json` HarnessBench row (enforced_proof resolved, corpus
-covers the check, ees=1.0, trust_floor 2).
+`cryptography` present, `sigstore` absent (T2 is CI-exercised). 32 tests pass,
+including the post-review regression suite (`tests/test_propagation.py`).
+
+CLI walking-skeleton demo, two cases:
+- Against the **real shipped** `semantic-clean-room.v1.json` row *today*: the
+  enforced gate renders "gate unproven (weak binding)" and VERDICT FAIL, because
+  HarnessBench does not yet declare `config_sha256`. This is the honest result.
+- Against an N2-ready copy of that row that declares `config_sha256`: the proof
+  resolves (corpus covers the check, ees=1.0, config-sha bound), trust_floor 2,
+  VERDICT PASS.
+
+The gap between the two is exactly CONTRACT-DELTA ask (2), and it blocks a public
+enforced seal until N2 ships it.
+
+## Review
+
+Phase 0-2 passed a specialist adversarial review (python-reviewer). Two confirmed
+false-PASS bugs and several propagation gaps were fixed before this line:
+the forgeable corpus-relevance bypass (now requires cryptographic config binding),
+`verdict.result` and freshness now propagate to the verdict (split into
+`authentic` vs `checks_passed`), the CLI stub re-executor was replaced with a real
+subprocess re-executor, grade-C authority is re-enforced at verify, an EES floor
+was added, and `--proof-root` path traversal was confined.

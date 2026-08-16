@@ -65,20 +65,28 @@ def write_hb_report(
     enforced: int = 46,
     advised: int = 0,
     threat_class: str | None = None,
+    config_sha256: str | None = VALID_SHA,
+    ees: float | None = None,
 ) -> EnforcedProof:
-    """Write a HarnessBench-report/v1 fixture and return an EnforcedProof for it."""
+    """Write a HarnessBench-report/v1 fixture and return an EnforcedProof for it.
+
+    Defaults to a report that DOES resolve: it declares config_sha256 == VALID_SHA
+    (the default check config_ref). Pass config_sha256=None for a weak-binding case.
+    """
     report = {
         "schema": "harnessbench-report/v1",
         "subject": "semantic-clean-room",
         "harness": "claude-code",
         "corpus": corpus,
         "corpus_version": "1",
-        "ees": 1.0 if advised == 0 else 0.5,
+        "ees": ees if ees is not None else (1.0 if advised == 0 else 0.5),
         "verdicts": {"enforced": enforced, "advised": advised, "permitted": 22, "errors": 0},
         "n": 68,
     }
     if threat_class is not None:
         report["threat_class"] = threat_class
+    if config_sha256 is not None:
+        report["config_sha256"] = config_sha256
     raw = json.dumps(report, sort_keys=True, separators=(",", ":")).encode("utf-8")
     path.write_bytes(raw)
     return EnforcedProof(sha256=sha256_hex(raw), uri=str(path))
