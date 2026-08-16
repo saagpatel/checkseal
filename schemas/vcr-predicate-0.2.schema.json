@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://saagarpatel.dev/schemas/vcr-predicate-0.2.schema.json",
+  "title": "VCR predicate v0.2",
+  "description": "Vendored, version-pinned mirror of the VCR v0.2 predicate CheckSeal (N1) consumes and produces. Core fields are owned by home base; do not change them here.",
+  "type": "object",
+  "required": ["vcr_version", "subject", "checks"],
+  "additionalProperties": false,
+  "properties": {
+    "vcr_version": { "const": "0.2" },
+    "subject": { "$ref": "#/$defs/subject" },
+    "checks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/checkEntry" } }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "object",
+      "required": ["sha256"],
+      "additionalProperties": false,
+      "properties": { "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+    },
+    "subject": {
+      "type": "object",
+      "required": ["kind", "digest", "name"],
+      "properties": {
+        "kind": { "type": "string" },
+        "digest": { "$ref": "#/$defs/sha256" },
+        "name": { "type": "string", "maxLength": 256 },
+        "mediaType": { "type": "string" }
+      }
+    },
+    "checkEntry": {
+      "type": "object",
+      "required": ["check", "verdict", "evidence", "runtime", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "check": { "$ref": "#/$defs/check" },
+        "verdict": { "$ref": "#/$defs/verdict" },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "runtime": { "$ref": "#/$defs/runtime" },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "check": {
+      "type": "object",
+      "required": ["id", "kind", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(/[a-z0-9-]+)*$" },
+        "kind": { "enum": ["review", "guard", "human"] },
+        "version": { "type": "string" },
+        "config_ref": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["result", "enforced"],
+      "additionalProperties": false,
+      "properties": {
+        "result": { "enum": ["pass", "fail", "over_blocked", "error", "skip", "n/a"] },
+        "enforced": { "enum": ["enforced", "advisory", "observed"] },
+        "enforced_proof": {
+          "type": "object",
+          "required": ["sha256", "uri"],
+          "additionalProperties": false,
+          "properties": {
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "uri": { "type": "string" }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["kind", "grade", "digest"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["exit-code", "diff-digest", "log-digest", "transcript-digest", "reviewer-id"] },
+        "grade": { "enum": ["A", "B", "C"] },
+        "digest": { "$ref": "#/$defs/sha256" },
+        "uri": { "type": "string" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["ran_at", "runner"],
+      "additionalProperties": false,
+      "properties": {
+        "ran_at": { "type": "string" },
+        "runner": { "enum": ["fleet", "ci", "human"] },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "env_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["authority", "instruction_boundary"],
+      "additionalProperties": false,
+      "properties": {
+        "authority": { "enum": ["operator", "agent", "ingested"] },
+        "instruction_boundary": {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": { "kind": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

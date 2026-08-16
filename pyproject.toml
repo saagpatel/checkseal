@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "checkseal"
+version = "0.1.0"
+description = "Emit and verify check-receipts for AI artifacts: which checks passed, and how strongly each binds."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Saagar Patel" }]
+keywords = ["provenance", "in-toto", "sigstore", "attestation", "verification", "ai"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+# Core is stdlib-only: model, trust, digest, statement, DSSE encoding, store, and
+# the verifier's non-signature steps. Signing is isolated to extras.
+dependencies = []
+
+[project.optional-dependencies]
+sign = ["cryptography>=42"]              # T1 local-key signing/verification
+keyless = ["sigstore>=3,<4"]            # T2 Sigstore keyless (Fulcio + Rekor)
+dev = ["pytest>=8", "ruff>=0.6", "cryptography>=42"]
+
+[project.scripts]
+checkseal = "checkseal.__main__:main"
+
+[project.urls]
+Homepage = "https://saagarpatel.dev"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/checkseal"]
+
+[tool.ruff]
+line-length = 110
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SLF"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
