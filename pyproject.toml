@@ -23,7 +23,8 @@ dependencies = []
 [project.optional-dependencies]
 sign = ["cryptography>=42"]              # T1 local-key signing/verification
 keyless = ["sigstore>=3,<4"]            # T2 Sigstore keyless (Fulcio + Rekor)
-dev = ["pytest>=8", "ruff>=0.6", "cryptography>=42"]
+vl = ["verification-ledger>=0.1"]       # VL-backed SealStore (retention + provenance typing)
+dev = ["pytest>=8", "ruff>=0.6", "cryptography>=42", "verification-ledger>=0.1"]
 
 [project.scripts]
 checkseal = "checkseal.__main__:main"
