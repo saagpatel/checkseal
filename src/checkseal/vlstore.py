@@ -12,9 +12,11 @@ extra and only *using* the store raises a helpful error.
 from __future__ import annotations
 
 import importlib
+import json
+from collections.abc import Iterator
 
 from .digest import canonical_bytes
-from .model import Authority, CheckEntry
+from .model import Authority, CheckEntry, VCRError
 from .store import CheckResult, SealStore, T0Record
 
 
@@ -47,24 +49,38 @@ class VerificationLedgerSealStore(SealStore):
             )
             return int(written.record_id)
 
-    def read(self) -> list[T0Record]:
+    def _iter_checkseal(self) -> Iterator[tuple[T0Record, CheckResult]]:
+        """Yield ``(T0Record, CheckResult)`` for every well-formed CheckSeal record, id-ordered.
+
+        A shared fleet ledger may also hold records written by other producers; those are
+        skipped rather than crashing the read. ``created_at`` is taken from the check's own
+        ``ran_at`` (as ``JsonlSealStore`` does), not the ledger's write time, so a result
+        reads back identically whichever store persisted it. Ordering is by record id, since
+        check order is part of the canonical statement bytes a signature covers.
+        """
         ledger_cls, _trust_cls = _load_vl()
         with ledger_cls(self._db) as ledger:
-            return [
-                T0Record(
-                    id=int(enveloped.record.id),
-                    payload=str(enveloped.record.payload),
-                    source_trust=Authority(enveloped.record.source_trust.value),
-                    durable=bool(enveloped.record.durable),
-                    created_at=str(enveloped.record.created_at),
-                )
-                for enveloped in ledger.read_all()
-            ]
+            enveloped_records = list(ledger.read_all())
+        for enveloped in sorted(enveloped_records, key=lambda e: int(e.record.id)):
+            record = enveloped.record
+            try:
+                result = CheckResult.from_jsonable(json.loads(record.payload))
+            except (ValueError, VCRError):
+                continue  # not a CheckSeal check-result (foreign producer) - skip
+            t0 = T0Record(
+                id=int(record.id),
+                payload=str(record.payload),
+                source_trust=Authority(record.source_trust.value),
+                durable=bool(record.durable),
+                created_at=result.entry.runtime.ran_at,
+            )
+            yield t0, result
+
+    def read(self) -> list[T0Record]:
+        return [t0 for t0, _ in self._iter_checkseal()]
 
     def read_for_subject(self, subject_digest: str) -> list[CheckEntry]:
         """Every check entry whose subject digest matches (many checks / one subject)."""
         return [
-            record.result().entry
-            for record in self.read()
-            if record.result().subject.digest == subject_digest
+            result.entry for _t0, result in self._iter_checkseal() if result.subject.digest == subject_digest
         ]
