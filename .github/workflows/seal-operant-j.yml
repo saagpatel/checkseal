@@ -1,0 +1,67 @@
+name: checkseal T2 observed seal (OPERANT-J judge sitting)
+
+# Mints the PUBLIC, identity-bound T2 CheckSeal for an OPERANT-J judge sitting:
+# a Verified-Check Record receipt signed keyless via Sigstore, so it carries a
+# Fulcio identity and a Rekor transparency-log entry. The offline demo
+# (examples/seal_operant_j_run.py with --key/--out) produces only a T1 seal;
+# this is the tier valid for public use.
+#
+# The judge lane is OBSERVED: every check is enforced=observed with no
+# enforced_proof (a benchmark observes a judge; it enforces nothing), so unlike
+# the harness-config enforced seal there is no proof to resolve and verify needs
+# no --proof-root. The subject is the receipt file itself, so the signature binds
+# these exact results and any later edit breaks the subject digest at verify.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # REQUIRED: mint an OIDC token for Fulcio keyless signing
+
+env:
+  RECEIPT: examples/artifacts/operant-j-gemini-refusal-probe.vcr.jsonl
+  NAME: operant-j/gemini-3.1-pro-high+v1.1
+
+jobs:
+  seal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install checkseal with the keyless extra
+        run: pip install ".[keyless]"
+
+      - name: Build the T0 store (observed judge checks), store-only
+        run: |
+          python examples/seal_operant_j_run.py \
+            --receipt "$RECEIPT" \
+            --store oj.jsonl
+
+      - name: Mint the public T2 keyless seal
+        run: |
+          python -m checkseal seal-keyless \
+            --store oj.jsonl \
+            --subject "$RECEIPT" \
+            --name "$NAME" \
+            --kind artifact \
+            --out operant-j.sigstore.json
+
+      - name: Self-verify the bundle (full Verifier Contract)
+        env:
+          # The Fulcio SAN for a GitHub Actions workflow is the workflow ref.
+          EXPECTED_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/seal-operant-j.yml@${{ github.ref }}
+          EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          python -m checkseal verify-keyless operant-j.sigstore.json \
+            --subject "$RECEIPT" \
+            --identity "$EXPECTED_IDENTITY" \
+            --issuer "$EXPECTED_ISSUER"
+
+      - name: Upload the T2 seal
+        uses: actions/upload-artifact@v4
+        with:
+          name: operant-j-t2-seal
+          path: operant-j.sigstore.json
