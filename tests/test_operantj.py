@@ -139,6 +139,50 @@ def test_seal_round_trips_through_sign_and_verify(tmp_path, local_signer):
     assert by_result["ref-window-restore"].result_ok is False
 
 
+def _sign_sample_seal(tmp_path, local_signer) -> tuple[str, str]:
+    """Sign the mixed sitting (pass/fail/error) as a T1 seal; return (receipt, seal_path)."""
+    receipt = _sample_receipt(tmp_path)
+    subject, entries = ingest_operant_j_receipt(receipt)
+    store = JsonlSealStore(str(tmp_path / "store.jsonl"))
+    for entry in entries:
+        store.append(CheckResult(subject, entry))
+    seal = sign_local(assemble(store, subject), local_signer, public=False)
+    seal_path = tmp_path / "operant-j.intoto.jsonl"
+    seal_path.write_text(seal.to_intoto_jsonl() + "\n", encoding="utf-8")
+    return receipt, str(seal_path)
+
+
+def test_authentic_only_gates_on_authenticity_not_check_results(tmp_path, local_signer):
+    receipt, seal_path = _sign_sample_seal(tmp_path, local_signer)
+    report = verify_local_seal(seal_path, local_signer.verifier(), subject_path=receipt)
+
+    # the sitting faithfully records a fail and an error, so not every check passed...
+    assert report.checks_passed is False
+    assert report.ok is False
+    # ...but the seal is genuine and binds these exact results: an observed sitting is
+    # authentic precisely because it reports the failures honestly.
+    assert report.authentic is True
+    assert report.passes(authentic_only=True) is True
+    assert report.passes(authentic_only=False) is False
+
+    # the rendered verdict tracks the mode, so a CI log never prints FAIL while exiting 0
+    assert "VERDICT: PASS (authenticity only" in report.render(authentic_only=True)
+    assert "VERDICT: FAIL" in report.render(authentic_only=False)
+
+
+def test_cli_verify_authentic_only_flag_flips_the_exit_code(tmp_path, local_signer):
+    from checkseal.__main__ import main
+    from checkseal.sign.local import write_public_pem
+
+    receipt, seal_path = _sign_sample_seal(tmp_path, local_signer)
+    pub = tmp_path / "pub.pem"
+    write_public_pem(local_signer, str(pub))
+
+    base = ["verify", seal_path, "--subject", receipt, "--pubkey", str(pub)]
+    assert main(base) == 1  # default: an honestly recorded fail fails the combined verdict
+    assert main([*base, "--authentic-only"]) == 0  # authenticity alone holds regardless
+
+
 def test_tampered_receipt_breaks_the_subject_digest(tmp_path, local_signer):
     receipt = _sample_receipt(tmp_path)
     subject, entries = ingest_operant_j_receipt(receipt)

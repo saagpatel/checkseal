@@ -66,8 +66,8 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         reexecutor=reexecutor,
         loader=loader,
     )
-    print(report.render())
-    return 0 if report.ok else 1
+    print(report.render(authentic_only=args.authentic_only))
+    return 0 if report.passes(authentic_only=args.authentic_only) else 1
 
 
 def _build_reexecutor(command: str):
@@ -144,8 +144,8 @@ def _cmd_verify_keyless(args: argparse.Namespace) -> int:
         loader=_build_loader(args.proof_root),
         max_age_seconds=args.max_age,
     )
-    print(report.render())
-    return 0 if report.ok else 1
+    print(report.render(authentic_only=args.authentic_only))
+    return 0 if report.passes(authentic_only=args.authentic_only) else 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -179,6 +179,12 @@ def build_parser() -> argparse.ArgumentParser:
         "(CHECKSEAL_CHECK_ID / CHECKSEAL_CONFIG_REF in env)",
     )
     vf.add_argument("--proof-root", default=None, help="resolve enforced_proof URIs confined under this dir")
+    vf.add_argument(
+        "--authentic-only",
+        action="store_true",
+        help="pass if the seal is authentic (signed, digest-bound, trusted entries) even when "
+        "some checks report a failing result; the honest verdict for an observed sitting",
+    )
     vf.set_defaults(func=_cmd_verify)
 
     slk = sub.add_parser("seal-keyless", help="seal for a public T2 seal via Sigstore keyless (CI/OIDC)")
@@ -199,6 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
     vk.add_argument("--reexec", default=None, metavar="CMD")
     vk.add_argument("--proof-root", default=None)
     vk.add_argument("--max-age", type=int, default=None, help="freshness bound in seconds (Rekor not-after)")
+    vk.add_argument(
+        "--authentic-only",
+        action="store_true",
+        help="pass if the seal is authentic (signed, digest-bound, fresh, trusted entries) even "
+        "when some checks report a failing result; the honest verdict for an observed sitting",
+    )
     vk.set_defaults(func=_cmd_verify_keyless)
     return p
 
