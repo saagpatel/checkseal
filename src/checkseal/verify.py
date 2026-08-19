@@ -79,7 +79,18 @@ class VerificationReport:
     def ok(self) -> bool:
         return self.authentic and self.checks_passed
 
-    def render(self) -> str:
+    def passes(self, *, authentic_only: bool = False) -> bool:
+        """The verifier's exit decision.
+
+        ``authentic_only`` gates on authenticity alone (signature + subject digest +
+        freshness + trusted entries) and NOT on whether the checks passed. That is the
+        honest verdict for an OBSERVED sitting that faithfully records failures: the seal
+        is genuine and binds these exact results, even though the results include fails.
+        Without it, ``ok`` also requires every check to pass, the right default for a gate.
+        """
+        return self.authentic if authentic_only else self.ok
+
+    def render(self, *, authentic_only: bool = False) -> str:
         lines = [
             f"seal tier: {self.tier}",
             f"[1] subject digest: {'OK' if self.subject_digest_ok else 'MISMATCH'} - {self.subject_reason}",
@@ -98,7 +109,8 @@ class VerificationReport:
             f"authentic: {'yes' if self.authentic else 'NO'}  |  "
             f"checks passed: {'yes' if self.checks_passed else 'NO'}"
         )
-        lines.append(f"VERDICT: {'PASS' if self.ok else 'FAIL'}")
+        mode = " (authenticity only; check results not gated)" if authentic_only else ""
+        lines.append(f"VERDICT: {'PASS' if self.passes(authentic_only=authentic_only) else 'FAIL'}{mode}")
         return "\n".join(lines)
 
 

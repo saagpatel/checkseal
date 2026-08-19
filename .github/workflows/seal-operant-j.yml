@@ -63,11 +63,15 @@ jobs:
           # The Fulcio SAN for a GitHub Actions workflow is the workflow ref.
           EXPECTED_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/seal-operant-j.yml@${{ github.ref }}
           EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+        # --authentic-only: this is an OBSERVED judge sitting, so a faithfully recorded
+        # failing verdict must NOT fail the seal. We gate on authenticity (signature +
+        # subject digest + Rekor freshness + trusted entries), not on the judge's score.
         run: |
           python -m checkseal verify-keyless operant-j.sigstore.json \
             --subject "$RECEIPT" \
             --identity "$EXPECTED_IDENTITY" \
-            --issuer "$EXPECTED_ISSUER"
+            --issuer "$EXPECTED_ISSUER" \
+            --authentic-only
 
       - name: Upload the T2 seal
         uses: actions/upload-artifact@v4
