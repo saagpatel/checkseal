@@ -30,6 +30,7 @@ from .model import (
     SubjectKind,
     VCRError,
 )
+from .operantj import entry_from_vcr_v01, ingest_operant_j_receipt
 from .profile import validate_n1_profile
 from .seal import Seal, assemble, sign_keyless, sign_local
 from .statement import build_statement, parse_statement, statement_bytes
@@ -65,6 +66,8 @@ __all__ = [
     "VerificationReport",
     "assemble",
     "build_statement",
+    "entry_from_vcr_v01",
+    "ingest_operant_j_receipt",
     "parse_statement",
     "render_trust_floor",
     "sign_keyless",
