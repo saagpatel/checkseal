@@ -1,0 +1,76 @@
+name: checkseal T2 skillscan seal (public skill)
+
+# Mints the PUBLIC, identity-bound T2 seal for the first agent-tooling receipt:
+# a skillscan-report/v1 over a pinned public skill (anthropics/skills
+# `skills/pdf` @ SKILL_SHA). The bundle is NOT vendored — the workflow clones
+# the public repo at the pinned commit and `seal-skillscan` re-derives the
+# subject identity from those bytes, refusing the vendored report if they do
+# not match. A third party reproduces the verdict the same way: clone at the
+# sha, recompute, verify.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # REQUIRED: mint an OIDC token for Fulcio keyless signing
+
+env:
+  REPORT: examples/artifacts/anthropic-skills-pdf.skillscan.v1.json
+  SKILL_REPO: https://github.com/anthropics/skills
+  SKILL_SHA: 3b3fad96af16a10759d930941b4520ba0c40edae
+  SKILL_PATH: skills/pdf
+  NAME: skill/anthropics-pdf@3b3fad9
+
+jobs:
+  seal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install checkseal with the keyless extra
+        run: pip install ".[keyless]"
+
+      - name: Fetch the pinned public skill bundle
+        run: |
+          git clone --filter=blob:none "$SKILL_REPO" /tmp/skills
+          git -C /tmp/skills checkout "$SKILL_SHA"
+
+      - name: Ingest the vendored report (identity re-derived from the cloned bytes)
+        run: |
+          python -m checkseal seal-skillscan \
+            --report "$REPORT" \
+            --bundle "/tmp/skills/$SKILL_PATH" \
+            --store t0.jsonl \
+            --manifest-out subject.manifest.json \
+            --runner ci
+
+      - name: Mint the public T2 keyless seal
+        run: |
+          python -m checkseal seal-keyless \
+            --store t0.jsonl \
+            --subject subject.manifest.json \
+            --name "$NAME" \
+            --kind skill_bundle \
+            --media-type application/vnd.checkseal.bundle-manifest+json \
+            --out skillscan.sigstore.json
+
+      - name: Self-verify the bundle (full Verifier Contract)
+        env:
+          EXPECTED_IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/seal-skillscan.yml@${{ github.ref }}
+          EXPECTED_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          python -m checkseal verify-keyless skillscan.sigstore.json \
+            --subject subject.manifest.json \
+            --identity "$EXPECTED_IDENTITY" \
+            --issuer "$EXPECTED_ISSUER"
+
+      - name: Upload the T2 seal + subject manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: skillscan-t2-seal
+          path: |
+            skillscan.sigstore.json
+            subject.manifest.json

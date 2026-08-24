@@ -1,0 +1,65 @@
+{
+  "schema": "skillscan-report/v1",
+  "scanner": "mcp-audit",
+  "scanner_version": "2.7.0",
+  "ran_at": "2026-08-24T10:08:02Z",
+  "subject": {
+    "kind": "skill_bundle",
+    "name": "skill/anthropics-pdf@3b3fad9",
+    "digest": "f34e0baf624be35aa6d41a07c7fdb901abaa08d593e58cc68a804c33d6484f2c",
+    "media_type": "application/vnd.checkseal.bundle-manifest+json"
+  },
+  "ruleset": {
+    "config_sha256": "fd965bca1295a359ef188adc8ccc87189c1352ac80c79dbf94b04aae1bc03afe",
+    "rules": [
+      "SKILL001",
+      "SKILL002",
+      "SKILL003",
+      "SKILL004",
+      "SKILL005",
+      "SKILL006",
+      "SKILL007",
+      "SKILL008",
+      "SKILL009",
+      "SKILL010",
+      "SKILL011"
+    ]
+  },
+  "checks": [
+    {
+      "id": "scan/injection-patterns",
+      "result": "pass",
+      "findings": 0,
+      "rule_ids": [
+        "SKILL001",
+        "SKILL002",
+        "SKILL003",
+        "SKILL004"
+      ],
+      "detail": []
+    },
+    {
+      "id": "scan/obfuscated-egress",
+      "result": "pass",
+      "findings": 0,
+      "rule_ids": [
+        "SKILL005",
+        "SKILL006",
+        "SKILL007"
+      ],
+      "detail": []
+    },
+    {
+      "id": "scan/dynamic-fetch-presence",
+      "result": "pass",
+      "findings": 0,
+      "rule_ids": [
+        "SKILL008",
+        "SKILL009",
+        "SKILL010",
+        "SKILL011"
+      ],
+      "detail": []
+    }
+  ]
+}
