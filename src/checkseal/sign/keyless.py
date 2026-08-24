@@ -41,16 +41,17 @@ def sign_statement_keyless(statement: dict[str, Any], *, identity_token: str | N
     the Fulcio cert and the Rekor inclusion proof as verification material.
     """
     _import_sigstore()
-    from sigstore.models import Bundle  # noqa: F401
-    from sigstore.oidc import IdentityToken, Issuer, detect_credential
-    from sigstore.sign import SigningContext
+    from sigstore.oidc import IdentityToken, detect_credential
+    from sigstore.sign import ClientTrustConfig, SigningContext
 
     raw_token = identity_token or detect_credential()
     if raw_token is None:  # pragma: no cover - CI/OIDC only
         raise VCRError("no ambient OIDC credential; pass identity_token or run in an OIDC context")
     token = raw_token if isinstance(raw_token, IdentityToken) else IdentityToken(raw_token)
 
-    ctx = SigningContext.production()
+    # sigstore 4.x: SigningContext.production() was removed in favour of an
+    # explicit trust config; production() carries the current TUF root.
+    ctx = SigningContext.from_trust_config(ClientTrustConfig.production())
     from sigstore.dsse import Statement
 
     # sigstore's Statement wraps the same fields; hand it our canonical dict.

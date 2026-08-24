@@ -19,11 +19,16 @@ pytest.importorskip("sigstore")
 
 
 def test_sign_path_symbols_exist():
-    # The exact imports at the top of sign_statement_keyless.
+    # The exact imports at the top of sign_statement_keyless (sigstore 4.x).
     from sigstore.dsse import Statement  # noqa: F401
-    from sigstore.models import Bundle  # noqa: F401
     from sigstore.oidc import IdentityToken, detect_credential  # noqa: F401
-    from sigstore.sign import SigningContext  # noqa: F401
+    from sigstore.sign import ClientTrustConfig, SigningContext
+
+    # 4.x replaced SigningContext.production() with an explicit trust config;
+    # pin the exact construction the keyless path uses so a further rename fails
+    # here, not at a live seal run.
+    assert hasattr(SigningContext, "from_trust_config")
+    assert hasattr(ClientTrustConfig, "production")
 
 
 def test_verify_path_symbols_exist():
