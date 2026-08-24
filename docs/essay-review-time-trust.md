@@ -15,9 +15,10 @@ reviewing fixes it, because the thing that runs was never present to be reviewed
 
 I have spent a while now building instruments around a single conviction: that words bind weakly
 and mechanisms bind strongly. A self-report — "this skill is safe," "we reviewed it," a green
-badge — is a claim, and claims sit around 80% no matter how sincere. Evidence of what actually
-happened is a different kind of object. It binds at 100% because it is not a promise about
-behavior; it is a record of it. The agent-skills supply chain has just handed that conviction its
+badge — is a claim, and a claim is only ever as good as the trust you extend the claimant.
+Evidence of what actually happened is a different kind of object. It binds without asking for that
+trust, because it is not a promise about behavior; it is a record of it, reproducible by anyone who
+doubts it. The agent-skills supply chain has just handed that conviction its
 sharpest possible example, and the people who found the number stated my thesis for me, in the
 voice of the attacker: whatever you reviewed, I will replace at runtime, so review me all you like.
 
