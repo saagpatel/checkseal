@@ -86,6 +86,12 @@ receipt format onto EU AI Act Article 12 record-keeping lives in
 [`docs/article-12-mapping.md`](docs/article-12-mapping.md) (a schema note, not
 legal advice).
 
+To seal a scanner's output over your own skills/servers:
+`checkseal seal-skillscan --report scan.json --bundle ./my-skill --store t0.jsonl`
+— the report contract is [`docs/skillscan-report-v1.md`](docs/skillscan-report-v1.md);
+the sealer recomputes the bundle's identity from bytes and refuses a report it
+cannot reproduce.
+
 ## Status
 
 Phases 0-2 complete (format, producer/sealer, verifier CLI); Phase 3 in progress

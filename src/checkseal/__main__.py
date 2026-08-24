@@ -113,6 +113,52 @@ def _build_loader(proof_root: str | None):
     return loader
 
 
+def _cmd_seal_skillscan(args: argparse.Namespace) -> int:
+    from .model import Authority, Runner, VCRError
+    from .profile_agent_tooling import validate_agent_tooling_profile
+    from .skillscan import seed_from_report
+    from .store import CheckResult
+
+    with open(args.report, "rb") as fh:
+        report_bytes = fh.read()
+    try:
+        seed = seed_from_report(
+            report_bytes,
+            args.bundle,
+            authority=Authority(args.authority),
+            runner=Runner(args.runner),
+        )
+        validate_agent_tooling_profile(seed.predicate, public=False)
+    except VCRError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+
+    store = JsonlSealStore(args.store)
+    for entry in seed.predicate.checks:
+        store.append(CheckResult(seed.predicate.subject, entry))
+
+    if seed.manifest_bytes is not None and args.manifest_out:
+        with open(args.manifest_out, "wb") as fh:
+            fh.write(seed.manifest_bytes)
+        print(f"wrote canonical bundle manifest -> {args.manifest_out} (this file IS the subject)")
+
+    n = len(seed.predicate.checks)
+    subject = seed.predicate.subject
+    if args.key and args.out:
+        from .sign.local import load_private_signer
+
+        seal = sign_local(seed.predicate, load_private_signer(args.key), public=False)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(seal.to_intoto_jsonl() + "\n")
+        print(f"sealed {n} scan check(s) for {subject.name} ({subject.digest[:12]}...) -> {args.out}")
+    else:
+        print(
+            f"stored {n} scan check(s) for {subject.name} ({subject.digest[:12]}...) in {args.store}; "
+            "seal with 'checkseal seal' (T1) or 'checkseal seal-keyless' (public T2)"
+        )
+    return 0
+
+
 def _cmd_seal_keyless(args: argparse.Namespace) -> int:
     from .seal import sign_keyless
 
@@ -186,6 +232,28 @@ def build_parser() -> argparse.ArgumentParser:
         "some checks report a failing result; the honest verdict for an observed sitting",
     )
     vf.set_defaults(func=_cmd_verify)
+
+    ssc = sub.add_parser(
+        "seal-skillscan",
+        help="ingest a skillscan-report/v1 over an agent skill / MCP server bundle (agent-tooling profile)",
+    )
+    ssc.add_argument("--report", required=True, help="the skillscan-report/v1 JSON from the scanner")
+    ssc.add_argument(
+        "--bundle",
+        required=True,
+        help="the scanned bundle (directory or archive); identity is recomputed from it",
+    )
+    ssc.add_argument("--store", required=True, help="T0 store to append the derived check-results to")
+    ssc.add_argument(
+        "--manifest-out",
+        default=None,
+        help="write the canonical bundle manifest here (directory form; this file is the subject artifact)",
+    )
+    ssc.add_argument("--key", default=None, help="T1 key; with --out, also seal immediately")
+    ssc.add_argument("--out", default=None, help="output .intoto.jsonl seal (requires --key)")
+    ssc.add_argument("--authority", default="agent", choices=["operator", "agent", "ingested"])
+    ssc.add_argument("--runner", default="fleet", choices=["fleet", "ci", "human"])
+    ssc.set_defaults(func=_cmd_seal_skillscan)
 
     slk = sub.add_parser("seal-keyless", help="seal for a public T2 seal via Sigstore keyless (CI/OIDC)")
     slk.add_argument("--store", required=True)
