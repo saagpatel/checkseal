@@ -73,6 +73,19 @@ proof), which are CLI-only. A Python-signed seal verifies in this JS verifier
 Public T2 seals are minted in CI: `checkseal seal-keyless` plus
 `.github/workflows/seal.yml` (GitHub OIDC → Fulcio → Rekor).
 
+## Profiles
+
+The base predicate is constrained by per-subject-class profiles. The **N1
+profile** (`src/checkseal/profile.py`) governs every public seal. The
+**agent-tooling profile** ([`docs/profile-agent-tooling.md`](docs/profile-agent-tooling.md))
+covers seals over agent skills and MCP servers: identity is bytes (a canonical
+bundle manifest or the archive as distributed), never a registry name; scan
+checks may claim `observed`/`advisory`, never `enforced`; the `runtime/`
+namespace is reserved for runtime-behavior receipts. A shape mapping of the
+receipt format onto EU AI Act Article 12 record-keeping lives in
+[`docs/article-12-mapping.md`](docs/article-12-mapping.md) (a schema note, not
+legal advice).
+
 ## Status
 
 Phases 0-2 complete (format, producer/sealer, verifier CLI); Phase 3 in progress

@@ -144,6 +144,16 @@ for its live tier.
 - **Phase 4 (later):** VL-backed store extra, C2PA embedding backend, hosted
   verifier, PyPI release, in-toto/C2PA community engagement.
 
+## Agent-tooling profile (added 2026-08-24)
+
+A subject-class profile layered on N1 for seals over agent skills and MCP
+servers — see `docs/profile-agent-tooling.md` (normative) and
+`src/checkseal/profile_agent_tooling.py` (producer-side validator; composes
+with `validate_n1_profile`). It changes no core field: subject class rides
+`kind="artifact"` + a profile-owned `mediaType` vocabulary, so it forks nothing
+and awaits no schema delta. Candidate designation N3, pending home-base
+confirmation.
+
 ## Reserved for v2 (inherited program decision)
 
 The Check-Set Manifest (a signed "artifacts of kind K must carry checks {set}"
