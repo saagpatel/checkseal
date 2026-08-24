@@ -34,6 +34,11 @@ MCPB_MEDIA_TYPE = "application/vnd.mcpb+zip"
 
 _SCAN_NS = "scan/"
 _RESERVED_NS = ("runtime/",)
+_SUBJECT_KINDS = (
+    SubjectKind.SKILL_BUNDLE.value,
+    SubjectKind.MCP_SERVER.value,
+    SubjectKind.ARTIFACT.value,  # pre-delta records; still valid
+)
 
 
 def validate_agent_tooling_profile(predicate: Predicate, *, public: bool) -> None:
@@ -43,11 +48,11 @@ def validate_agent_tooling_profile(predicate: Predicate, *, public: bool) -> Non
     that over-claims must be unmintable, not merely renderable as suspect).
     """
     subject = predicate.subject
-    if subject.kind != SubjectKind.ARTIFACT.value:
+    if subject.kind not in _SUBJECT_KINDS:
         raise VCRError(
-            f"agent-tooling: subject.kind must be {SubjectKind.ARTIFACT.value!r} in "
-            f"profile v{PROFILE_VERSION} (first-class kinds await a core schema delta); "
-            f"got {subject.kind!r}"
+            "agent-tooling: subject.kind must be 'skill_bundle' or 'mcp_server' "
+            "(first-class kinds, schema delta signed off 2026-08-24; 'artifact' "
+            f"accepted for records minted before the delta); got {subject.kind!r}"
         )
     if subject.media_type is None:
         raise VCRError(

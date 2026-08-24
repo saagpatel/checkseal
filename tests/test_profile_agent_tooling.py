@@ -56,7 +56,7 @@ def bundle_subject(name: str = "skill/demo-summarizer@fixture") -> tuple[Subject
     manifest_bytes, digest = canonical_manifest(FIXTURE_BUNDLE)
     return (
         Subject(
-            kind="artifact",
+            kind="skill_bundle",
             digest=digest,
             name=name,
             media_type=BUNDLE_MANIFEST_MEDIA_TYPE,
@@ -93,7 +93,7 @@ def test_mcpb_archive_subject_verifies(tmp_path, local_signer):
         info = zipfile.ZipInfo("manifest.json", date_time=(2026, 1, 1, 0, 0, 0))
         zf.writestr(info, json.dumps({"name": "demo-server", "version": "1.0.0"}))
     subject = Subject(
-        kind="artifact",
+        kind="mcp_server",
         digest=archive_digest(mcpb),
         name="mcp-server/demo-server@1.0.0",
         media_type=MCPB_MEDIA_TYPE,
@@ -189,9 +189,12 @@ def test_profile_requires_artifact_kind_and_media_type():
     )
     with pytest.raises(VCRError, match="subject.kind"):
         validate_agent_tooling_profile(Predicate(subject=wrong_kind, checks=[scan_entry()]), public=False)
-    no_media = Subject(kind="artifact", digest=digest, name="skill/x")
+    no_media = Subject(kind="skill_bundle", digest=digest, name="skill/x")
     with pytest.raises(VCRError, match="mediaType"):
         validate_agent_tooling_profile(Predicate(subject=no_media, checks=[scan_entry()]), public=False)
+    # Pre-delta records minted with the generic kind stay valid.
+    pre_delta = Subject(kind="artifact", digest=digest, name="skill/x", media_type=BUNDLE_MANIFEST_MEDIA_TYPE)
+    validate_agent_tooling_profile(Predicate(subject=pre_delta, checks=[scan_entry()]), public=False)
 
 
 def test_profile_composes_with_n1():

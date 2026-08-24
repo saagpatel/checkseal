@@ -151,8 +151,9 @@ servers — see `docs/profile-agent-tooling.md` (normative) and
 `src/checkseal/profile_agent_tooling.py` (producer-side validator; composes
 with `validate_n1_profile`). It changes no core field: subject class rides
 `kind="artifact"` + a profile-owned `mediaType` vocabulary, so it forks nothing
-and awaits no schema delta. Candidate designation N3, pending home-base
-confirmation.
+and needed no schema delta to ship (the additive `skill_bundle`/`mcp_server`
+subject kinds were signed off 2026-08-24 and adopted). Designation N3,
+confirmed 2026-08-24.
 
 ## Reserved for v2 (inherited program decision)
 

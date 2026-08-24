@@ -27,9 +27,13 @@ _SHA256_LEN = 64
 class SubjectKind(StrEnum):
     ARTIFACT = "artifact"
     HARNESS_CONFIG = "harness_config"
-    # FLAG: home base's VCR may enumerate more subject kinds (the briefing text
-    # was lossy here). Unknown kinds parse as a warning, not a hard error, so a
-    # home-base addition does not break the verifier. See parse_subject_kind.
+    # Signed off by home base 2026-08-24 (additive delta) for the agent-tooling
+    # profile; mirrors vcr-core's schema enum.
+    SKILL_BUNDLE = "skill_bundle"
+    MCP_SERVER = "mcp_server"
+    # FLAG: home base's VCR may enumerate more subject kinds. Unknown kinds
+    # parse as a warning, not a hard error, so a home-base addition does not
+    # break the verifier. See parse_subject_kind.
 
 
 class CheckKind(StrEnum):

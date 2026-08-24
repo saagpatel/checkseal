@@ -1,7 +1,8 @@
-# Agent-Tooling Profile v0.1
+# Agent-Tooling Profile v0.1 (N3)
 
-**Candidate designation N3 — pending home-base confirmation.** Until confirmed, cite this
-document as "the CheckSeal agent-tooling profile," not by number.
+**Designation N3, confirmed by the operator 2026-08-24.** Third numbered instrument profile of
+the Verification Chain program, alongside N1 (CheckSeal seals) and N2 (HarnessBench dataset
+rows).
 
 **Consumes** the VCR v0.2 predicate exactly as CheckSeal produces it (`src/checkseal/model.py`).
 This profile constrains which **values** an agent-tooling seal may carry; it changes **no core
@@ -34,9 +35,10 @@ Registries accept planted entries; names are therefore untrusted. **Identity is 
 
 Rules:
 
-- `subject.kind` is `"artifact"` in v0.1. First-class `skill_bundle` / `mcp_server` kinds are an
-  **additive core-schema delta awaiting home-base sign-off**; this profile does not depend on the
-  outcome (CheckSeal parses unknown kinds conservatively, so adoption later is non-breaking).
+- `subject.kind` is `"skill_bundle"` for directory- or archive-shaped skills and plugins, and
+  `"mcp_server"` for MCP server distributions — first-class kinds added to the core schema by an
+  additive delta **signed off 2026-08-24** (same predicateType; every prior record stays valid).
+  `"artifact"` remains accepted for records minted before the delta.
 - `subject.mediaType` is **mandatory**: it tells a verifier how to recompute identity. The
   manifest media type means "recompute the canonical manifest from the installed tree and hash
   it"; any other media type means "hash the named artifact's raw bytes."
@@ -152,7 +154,7 @@ A well-formed record over it:
 {
   "vcr_version": "0.2",
   "subject": {
-    "kind": "artifact",
+    "kind": "skill_bundle",
     "digest": {"sha256": "c3b66f7c14f62ec11e66b301c931726554c7bfc2ab6311cc6e5b76d680818469"},
     "name": "skill/demo-summarizer@fixture",
     "mediaType": "application/vnd.checkseal.bundle-manifest+json"
@@ -178,7 +180,7 @@ For an archive-shaped distribution the subject is the bytes as distributed — n
 
 ```json
 {
-  "kind": "artifact",
+  "kind": "mcp_server",
   "digest": {"sha256": "<sha256 of the .mcpb zip bytes>"},
   "name": "mcp-server/demo-server@1.0.0",
   "mediaType": "application/vnd.mcpb+zip"
