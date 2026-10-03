@@ -36,7 +36,7 @@ class CheckResult:
         return {"subject": self.subject.to_jsonable(), "check_entry": self.entry.to_jsonable()}
 
     @staticmethod
-    def from_jsonable(d: Any) -> "CheckResult":
+    def from_jsonable(d: Any) -> CheckResult:
         _require(isinstance(d, dict), "check result: must be an object")
         return CheckResult(
             subject=Subject.from_jsonable(d.get("subject")),

@@ -7,12 +7,11 @@ report whose corpus threat-class actually covers the check.
 
 from __future__ import annotations
 
-from conftest import make_entry, make_subject, write_hb_report
-
 from checkseal.hbresolve import resolve_enforced_proof
 from checkseal.model import Enforced, Grade
 from checkseal.seal import assemble, sign_local
 from checkseal.store import CheckResult, JsonlSealStore
+from conftest import make_entry, make_subject, write_hb_report
 
 
 def test_matching_corpus_resolves(tmp_path):

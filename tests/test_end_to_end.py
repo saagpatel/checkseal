@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from conftest import make_entry, make_subject, write_hb_report
-
-from checkseal.digest import sha256_hex
 from checkseal.model import CheckKind, Enforced, EvidenceKind, Grade, Result
 from checkseal.seal import assemble, sign_local
 from checkseal.store import CheckResult, JsonlSealStore
+from conftest import make_entry, make_subject, write_hb_report
 
 
 def _seal_two_checks(tmp_path, signer, proof):
