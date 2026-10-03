@@ -28,7 +28,7 @@ def _require_crypto() -> None:
         raise VCRError("T1 signing needs the 'cryptography' package (install checkseal[sign])")
 
 
-def _keyid(public: "Ed25519PublicKey") -> str:
+def _keyid(public: Ed25519PublicKey) -> str:
     from cryptography.hazmat.primitives import serialization
 
     raw = public.public_bytes(
@@ -39,7 +39,7 @@ def _keyid(public: "Ed25519PublicKey") -> str:
 
 
 class LocalKeySigner(Signer):
-    def __init__(self, private_key: "Ed25519PrivateKey") -> None:
+    def __init__(self, private_key: Ed25519PrivateKey) -> None:
         _require_crypto()
         self._key = private_key
         self._keyid = _keyid(private_key.public_key())
@@ -53,10 +53,10 @@ class LocalKeySigner(Signer):
         return self._keyid
 
     @property
-    def public_key(self) -> "Ed25519PublicKey":
+    def public_key(self) -> Ed25519PublicKey:
         return self._key.public_key()
 
-    def verifier(self) -> "LocalKeyVerifier":
+    def verifier(self) -> LocalKeyVerifier:
         """The matching verifier for this signer (avoids private-key reach-through)."""
         return LocalKeyVerifier(self._key.public_key())
 
@@ -64,13 +64,13 @@ class LocalKeySigner(Signer):
         return Signature(sig=self._key.sign(data), keyid=self._keyid)
 
     @staticmethod
-    def generate() -> "LocalKeySigner":
+    def generate() -> LocalKeySigner:
         _require_crypto()
         return LocalKeySigner(Ed25519PrivateKey.generate())
 
 
 class LocalKeyVerifier(SignatureVerifier):
-    def __init__(self, public_key: "Ed25519PublicKey") -> None:
+    def __init__(self, public_key: Ed25519PublicKey) -> None:
         _require_crypto()
         self._key = public_key
         self._keyid = _keyid(public_key)

@@ -5,14 +5,12 @@ and must fail if the fix regresses.
 
 from __future__ import annotations
 
-from conftest import VALID_SHA, make_entry, make_subject, write_hb_report
-
 from checkseal.hbresolve import resolve_enforced_proof
 from checkseal.model import Enforced, EvidenceKind, Grade, Result
 from checkseal.seal import assemble, sign_local
 from checkseal.store import CheckResult, JsonlSealStore
 from checkseal.verify import _freshness, verify_local_seal
-
+from conftest import VALID_SHA, make_entry, make_subject, write_hb_report
 
 # --- the forgeable corpus-relevance bypass (HIGH) ---
 

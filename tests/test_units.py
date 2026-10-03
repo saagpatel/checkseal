@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from conftest import make_entry, make_subject
 
 from checkseal.digest import canonical_bytes, digest_of
 from checkseal.dsse import PAYLOAD_TYPE, Envelope, Signature, pae
@@ -18,6 +17,7 @@ from checkseal.model import (
 from checkseal.profile import validate_n1_profile
 from checkseal.statement import build_statement, parse_statement, statement_bytes
 from checkseal.trust import check_invariant_e1, render_trust_floor, trust_floor
+from conftest import make_entry, make_subject
 
 
 def test_canonical_bytes_are_deterministic():
