@@ -33,8 +33,8 @@ That limit is stated, not hidden.
 
 ```bash
 pip install checkseal            # stdlib-only core
-pip install checkseal[sign]      # + T1 local-key signing (cryptography)
-pip install checkseal[keyless]   # + T2 Sigstore keyless (public seals)
+pip install "checkseal[sign]"      # + T1 local-key signing (cryptography)
+pip install "checkseal[keyless]"   # + T2 Sigstore keyless (public seals)
 ```
 
 ## Quickstart (T1, offline)
@@ -68,7 +68,7 @@ digest, checks the Statement/predicate subject coupling, verifies the Ed25519
 signature over the DSSE PAE, and renders `trust_floor` — and it states loudly
 what it does NOT check (re-execution, enforced_proof resolution, full Rekor
 proof), which are CLI-only. A Python-signed seal verifies in this JS verifier
-(`node --test js/`), proving the format is language-agnostic.
+(`node --test js/checkseal_verify.test.mjs`), proving the format is language-agnostic.
 
 Public T2 seals are minted in CI: `checkseal seal-keyless` plus
 `.github/workflows/seal.yml` (GitHub OIDC → Fulcio → Rekor).
@@ -91,6 +91,39 @@ To seal a scanner's output over your own skills/servers:
 — the report contract is [`docs/skillscan-report-v1.md`](docs/skillscan-report-v1.md);
 the sealer recomputes the bundle's identity from bytes and refuses a report it
 cannot reproduce.
+
+## Development verification
+
+Run from the repository root with Python 3.12+ and Node.js 22 (the CI versions).
+Use a virtual environment; the JS cross-language test invokes `python3`, so
+activate the environment before running Node:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[dev,keyless]"
+# Synthetic T1 CLI smoke: temporary artifact, store and locally generated keys.
+python -m pytest -q tests/test_end_to_end.py::test_cli_keygen_seal_verify
+# Broader offline suite, including keyless API import guards.
+python -m pytest -q
+node --test js/checkseal_verify.test.mjs
+python -m ruff check src tests
+```
+
+Replace the focused test node with the affected test module/case. `dev` includes
+the optional Verification Ledger backend used by its fixture tests; without
+that backend or the keyless extra, the corresponding tests skip. The keyless
+API guards only inspect imports/construction, without signing, fetching trust
+roots or contacting Sigstore. Live T2 signing/verification requires network
+access and OIDC/trust infrastructure; it is a separate integration lane, never
+a prerequisite for the offline smoke. See [CI](.github/workflows/tests.yml).
+
+There is no configured Python typecheck or standalone JS build. To check Python
+distribution packaging separately, install `build` in the environment and run
+`python -m build` (writes `dist/`); this does not publish anything. For browser
+verifier or receipts UI changes, also review valid/tampered synthetic T1 receipts
+and the displayed trust limitations in a browser. Python/Node fixture tests
+do not establish live Sigstore behavior or browser rendering.
 
 ## Status
 
