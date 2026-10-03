@@ -72,11 +72,20 @@ proof line shows the resolution.
 
 ## Verify it yourself
 
+The matching public verification key for the vendored harness-config seal is
+not included in this checkout. Obtain that original public key through a trusted
+channel before attempting signature verification; generating a new key will not
+verify the existing seal. With that key:
+
 ```bash
 PYTHONPATH=src python -m checkseal verify examples/artifacts/harness-config.intoto.jsonl \
   --subject examples/artifacts/harnessbench-semantic-clean-room.config-manifest.json \
-  --pubkey examples/artifacts/harness-config.verify-key.pem
+  --pubkey /path/to/matching-public-key.pem
 ```
 
-Run it from the repo root so the report's repo-relative `enforced_proof.uri`
-resolves. Regenerate with `examples/seal_harness_config.py`.
+Run from the repo root so the report's repo-relative `enforced_proof.uri`
+resolves. For a self-contained offline check without the original key, use the
+synthetic CLI test in [Development verification](../README.md#development-verification).
+`examples/seal_harness_config.py` can create a new demonstration seal with your
+own local key; direct its store/seal outputs to a temporary directory and keep
+the vendored receipt intact.
