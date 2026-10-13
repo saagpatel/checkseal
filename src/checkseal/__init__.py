@@ -79,4 +79,9 @@ __all__ = [
     "verify_local_seal",
 ]
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("checkseal")
+except PackageNotFoundError:
+    __version__ = "0.1.1"

@@ -63,7 +63,7 @@ def _digest_of(node: Any, ctx: str) -> str:
     return _bare_hex(node.get("sha256"), ctx)
 
 
-def entry_from_vcr_v01(record: dict, *, runner: Runner = Runner.FLEET) -> CheckEntry:
+def entry_from_vcr_v01(record: dict[str, Any], *, runner: Runner = Runner.FLEET) -> CheckEntry:
     """Translate one vcr-core v0.1 in-toto statement into a v0.2 observed CheckEntry.
 
     Every field is validated at ingest: the translated record is routed through the
@@ -83,6 +83,8 @@ def entry_from_vcr_v01(record: dict, *, runner: Runner = Runner.FLEET) -> CheckE
     verdict = pred.get("verdict") if isinstance(pred.get("verdict"), dict) else {}
     evidence = pred.get("evidence") if isinstance(pred.get("evidence"), dict) else {}
     runtime = pred.get("runtime") if isinstance(pred.get("runtime"), dict) else {}
+    assert isinstance(check, dict) and isinstance(verdict, dict)
+    assert isinstance(evidence, dict) and isinstance(runtime, dict)
 
     enforced = verdict.get("enforced")
     if enforced != Enforced.OBSERVED.value:
@@ -128,13 +130,13 @@ def entry_from_vcr_v01(record: dict, *, runner: Runner = Runner.FLEET) -> CheckE
     return CheckEntry.from_jsonable(entry_dict)
 
 
-def read_receipt(receipt_path: str | Path) -> list[dict]:
+def read_receipt(receipt_path: str | Path) -> list[dict[str, Any]]:
     """Parse a JSONL OPERANT-J receipt into its records; refuse an empty or malformed one.
 
     A bad JSON line or a non-object record raises VCRError (not a bare JSONDecodeError),
     so callers see the module's single failure type.
     """
-    records: list[dict] = []
+    records: list[dict[str, Any]] = []
     for lineno, line in enumerate(Path(receipt_path).read_text(encoding="utf-8").splitlines(), 1):
         line = line.strip()
         if not line:
@@ -145,6 +147,7 @@ def read_receipt(receipt_path: str | Path) -> list[dict]:
             raise VCRError(f"malformed JSON on line {lineno} of {receipt_path}: {exc}") from exc
         if not isinstance(rec, dict):
             raise VCRError(f"line {lineno} of {receipt_path} is not a JSON object")
+        assert isinstance(rec, dict)
         records.append(rec)
     if not records:
         raise VCRError(f"empty OPERANT-J receipt: {receipt_path}")

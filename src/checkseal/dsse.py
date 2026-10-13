@@ -63,7 +63,7 @@ class Envelope:
         except (ValueError, TypeError) as exc:
             raise VCRError(f"envelope.payload: not valid base64 ({exc})") from exc
         raw_sigs = d.get("signatures")
-        _require(isinstance(raw_sigs, list) and raw_sigs, "envelope.signatures: non-empty list")
+        _require(isinstance(raw_sigs, list) and len(raw_sigs) > 0, "envelope.signatures: non-empty list")
         sigs: list[Signature] = []
         for i, rs in enumerate(raw_sigs):
             _require(isinstance(rs, dict), f"signatures[{i}]: object")
