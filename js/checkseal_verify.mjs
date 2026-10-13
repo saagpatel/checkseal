@@ -16,6 +16,8 @@
 // Works in a browser and in Node (both expose crypto.subtle, atob, TextEncoder).
 
 const PAYLOAD_TYPE = "application/vnd.in-toto+json";
+const STATEMENT_TYPE = "https://in-toto.io/Statement/v1";
+const PREDICATE_TYPE = "https://saagarpatel.dev/vcr/v0.2";
 const BINDING_RANK = { enforced: 2, advisory: 1, observed: 0 };
 const GRADE_RANK = { A: 2, B: 1, C: 0 };
 const FLOOR_LABEL = { 2: "enforced + reproducible", 1: "surfaced", 0: "telemetry only" };
@@ -56,13 +58,40 @@ function trustFloor(entry) {
   return { floor: f, label: FLOOR_LABEL[f] };
 }
 
+function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
+
+function validateStatement(statement) {
+  if (!object(statement) || statement._type !== STATEMENT_TYPE) throw new Error("unsupported Statement type");
+  if (statement.predicateType !== PREDICATE_TYPE) throw new Error("unsupported predicate type");
+  const predicate = statement.predicate;
+  if (!object(predicate) || predicate.vcr_version !== "0.2") throw new Error("unsupported VCR predicate version");
+  if (!object(predicate.subject) || !object(predicate.subject.digest) || typeof predicate.subject.name !== "string") {
+    throw new Error("malformed predicate subject");
+  }
+  if (!Array.isArray(predicate.checks) || predicate.checks.length === 0) throw new Error("predicate checks must be non-empty");
+  if (!Array.isArray(statement.subject) || statement.subject.length !== 1 || !object(statement.subject[0])) {
+    throw new Error("Statement subject must contain one object");
+  }
+  for (const [index, entry] of predicate.checks.entries()) {
+    if (!object(entry) || !object(entry.check) || typeof entry.check.id !== "string" ||
+        !object(entry.verdict) || typeof entry.verdict.result !== "string" || typeof entry.verdict.enforced !== "string" ||
+        !object(entry.evidence) || typeof entry.evidence.grade !== "string" ||
+        !object(entry.runtime) || (entry.runtime.duration_ms !== undefined &&
+          (!Number.isInteger(entry.runtime.duration_ms) || entry.runtime.duration_ms < 0))) {
+      throw new Error(`malformed check entry at index ${index}`);
+    }
+  }
+}
+
 // publicKeyRaw: 32-byte Uint8Array Ed25519 public key (T1: supplied out of band;
 // T2: extracted from the bundle's Fulcio cert by the caller). Returns the report.
 export async function verifySeal({ envelope, artifactBytes, publicKeyRaw }) {
   if (!subtle) throw new Error("WebCrypto SubtleCrypto is unavailable in this environment");
 
-  if (envelope.payloadType !== PAYLOAD_TYPE) {
-    throw new Error(`unexpected DSSE payloadType ${envelope.payloadType}`);
+  if (!object(envelope) || envelope.payloadType !== PAYLOAD_TYPE) {
+    return { authenticSubset: false, malformed: true, subjectCoupled: false, subjectDigestOk: false,
+      subjectReason: "unsupported or malformed DSSE envelope", signatureOk: false,
+      signatureReason: `unexpected DSSE payloadType ${envelope?.payloadType}`, entries: [], notChecked: NOT_CHECKED };
   }
 
   // Step 6: the payload is untrusted. A malformed or tampered payload must
@@ -73,6 +102,7 @@ export async function verifySeal({ envelope, artifactBytes, publicKeyRaw }) {
   try {
     payload = b64ToBytes(envelope.payload);
     statement = JSON.parse(new TextDecoder().decode(payload));
+    validateStatement(statement);
     predicate = statement.predicate;
     if (!predicate || !predicate.subject || !predicate.subject.digest) {
       throw new Error("missing predicate.subject.digest");
@@ -131,7 +161,7 @@ export async function verifySeal({ envelope, artifactBytes, publicKeyRaw }) {
   }
 
   // step 5: render trust_floor per check.
-  const entries = (predicate.checks || []).map((entry) => {
+  const entries = predicate.checks.map((entry) => {
     const { floor, label } = trustFloor(entry);
     return {
       checkId: entry.check.id,
