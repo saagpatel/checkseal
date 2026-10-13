@@ -16,13 +16,23 @@ A verification is valid only if the verifier:
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .digest import sha256_file, sha256_hex
 from .dsse import PAYLOAD_TYPE, Envelope, pae
-from .hbresolve import ReportLoader, default_report_loader, resolve_enforced_proof
-from .model import Authority, CheckEntry, Enforced, Grade, Predicate, Result, VCRError
+from .hbresolve import ReportLoader, resolve_enforced_proof
+from .model import (
+    Authority,
+    CheckEntry,
+    Enforced,
+    EnforcementState,
+    Grade,
+    Predicate,
+    ResultState,
+    VCRError,
+)
 from .sign.base import Identity, SignatureVerifier, SigningTier
 from .statement import parse_statement
 from .trust import check_invariant_e1, render_trust_floor, trust_floor
@@ -34,8 +44,8 @@ ReExecutor = Callable[[CheckEntry], bool]
 @dataclass
 class EntryFinding:
     check_id: str
-    result: str
-    enforced: str
+    result: ResultState
+    enforced: EnforcementState
     trust_floor: int
     trust_floor_label: str
     reexecution: str  # confirmed | not-applicable | not-run | FAILED
@@ -146,13 +156,22 @@ def _verify_entries(
     predicate: Predicate,
     *,
     reexecutor: ReExecutor | None,
-    loader: ReportLoader,
+    loader: ReportLoader | None,
     attested_authority: bool,
+    allow_external: bool,
 ) -> list[EntryFinding]:
     findings: list[EntryFinding] = []
+    from .profile_agent_tooling import is_agent_tooling_subject, validate_agent_tooling_profile
+
+    if is_agent_tooling_subject(predicate.subject.kind, predicate.subject.media_type):
+        try:
+            validate_agent_tooling_profile(predicate, public=False)
+        except VCRError as exc:
+            return [
+                _fail_finding(entry, f"agent-tooling profile violated: {exc}") for entry in predicate.checks
+            ]
     for entry in predicate.checks:
         trusted = True
-        result_ok = entry.verdict.result not in (Result.FAIL, Result.ERROR, Result.OVER_BLOCKED)
 
         # E1 is a hard structural invariant.
         try:
@@ -163,7 +182,10 @@ def _verify_entries(
 
         # Step 3: re-execution for enforced + Grade-A.
         reexec = "not-applicable"
-        if entry.verdict.enforced is Enforced.ENFORCED and entry.evidence.grade is Grade.A:
+        if not allow_external:
+            reexec = "not-run (authentication, subject binding, or freshness failed)"
+            trusted = False
+        elif entry.verdict.enforced is Enforced.ENFORCED and entry.evidence.grade is Grade.A:
             if reexecutor is None:
                 reexec = "not-run (no re-executor supplied; run the CLI with --reexec)"
                 trusted = False
@@ -171,14 +193,21 @@ def _verify_entries(
                 try:
                     reexec = "confirmed" if reexecutor(entry) else "FAILED"
                 except Exception as exc:  # a re-executor error is a failed confirmation
-                    reexec = f"FAILED ({exc})"
+                    reexec = f"FAILED ({type(exc).__name__}: {exc})"
                 if reexec != "confirmed":
                     trusted = False
         elif entry.verdict.enforced is Enforced.ENFORCED and entry.evidence.grade is Grade.B:
             reexec = "producer-trusted (Grade-B immutable artifact; check<->evidence binding not re-run)"
 
         # Step 4: resolve enforced_proof or render gate unproven.
-        if entry.verdict.enforced_proof is not None:
+        if entry.verdict.enforced_proof is not None and not allow_external:
+            proof = "not-run (authentication, subject binding, or freshness failed)"
+            trusted = False
+        elif entry.verdict.enforced_proof is not None and loader is None:
+            proof = "not-run (proof resolution requires an explicit --proof-root or resolver)"
+            trusted = False
+        elif entry.verdict.enforced_proof is not None:
+            assert loader is not None
             res = resolve_enforced_proof(entry, entry.verdict.enforced_proof, loader=loader)
             proof = res.reason
             if not res.resolved:
@@ -197,34 +226,26 @@ def _verify_entries(
             if not attested_authority:
                 proof += " | grade-C on a non-identity-attested seal"
 
-        findings.append(
-            EntryFinding(
-                check_id=entry.check.id,
-                result=entry.verdict.result.value,
-                enforced=entry.verdict.enforced.value,
-                trust_floor=trust_floor(entry),
-                trust_floor_label=render_trust_floor(entry),
-                reexecution=reexec,
-                enforced_proof=proof,
-                trusted=trusted,
-                result_ok=result_ok,
-            )
-        )
+        findings.append(_entry_finding(entry, reexecution=reexec, proof=proof, trusted=trusted))
     return findings
 
 
-def _fail_finding(entry: CheckEntry, reason: str) -> EntryFinding:
+def _entry_finding(entry: CheckEntry, *, reexecution: str, proof: str, trusted: bool) -> EntryFinding:
     return EntryFinding(
         check_id=entry.check.id,
         result=entry.verdict.result.value,
         enforced=entry.verdict.enforced.value,
         trust_floor=trust_floor(entry),
         trust_floor_label=render_trust_floor(entry),
-        reexecution="not-run",
-        enforced_proof=reason,
-        trusted=False,
-        result_ok=entry.verdict.result not in (Result.FAIL, Result.ERROR, Result.OVER_BLOCKED),
+        reexecution=reexecution,
+        enforced_proof=proof,
+        trusted=trusted,
+        result_ok=entry.verdict.result.is_ok,
     )
+
+
+def _fail_finding(entry: CheckEntry, reason: str) -> EntryFinding:
+    return _entry_finding(entry, reexecution="not-run", proof=reason, trusted=False)
 
 
 def verify_local_seal(
@@ -234,7 +255,7 @@ def verify_local_seal(
     subject_path: str | None = None,
     subject_bytes: bytes | None = None,
     reexecutor: ReExecutor | None = None,
-    loader: ReportLoader = default_report_loader,
+    loader: ReportLoader | None = None,
 ) -> VerificationReport:
     """Verify a T0/T1 .intoto.jsonl seal. Step 2 (Rekor) is N/A for local tiers."""
     env = load_envelope(seal_path)
@@ -251,6 +272,7 @@ def verify_local_seal(
         reexecutor=reexecutor,
         loader=loader,
         attested_authority=identity.attested_authority if identity else False,
+        allow_external=subject_ok and sig_ok,
     )
 
     return VerificationReport(
@@ -287,7 +309,7 @@ def verify_keyless_seal(
     subject_path: str | None = None,
     subject_bytes: bytes | None = None,
     reexecutor: ReExecutor | None = None,
-    loader: ReportLoader = default_report_loader,
+    loader: ReportLoader | None = None,
     max_age_seconds: int | None = None,
     now: float | None = None,
 ) -> VerificationReport:
@@ -309,7 +331,13 @@ def verify_keyless_seal(
     )
     freshness_ok, freshness_reason = _freshness(bundle_json, max_age_seconds=max_age_seconds, now=now)
 
-    entries = _verify_entries(predicate, reexecutor=reexecutor, loader=loader, attested_authority=True)
+    entries = _verify_entries(
+        predicate,
+        reexecutor=reexecutor,
+        loader=loader,
+        attested_authority=True,
+        allow_external=subject_ok and freshness_ok,
+    )
     return VerificationReport(
         tier=SigningTier.T2.value,
         subject_digest_ok=subject_ok,
@@ -336,13 +364,12 @@ def _freshness(bundle_json: str, *, max_age_seconds: int | None, now: float | No
         return False, "freshness bound requested but Rekor integratedTime is unreadable (fail closed)"
     if integrated <= 0:
         return False, "freshness bound requested but Rekor integratedTime is absent (fail closed)"
-    import time as _time
-
-    current = now if now is not None else _time.time()
+    current = now if now is not None else time.time()
     age = current - integrated
     if age <= max_age_seconds:
         return (
             True,
-            f"fresh: signed {int(age)}s ago, within {max_age_seconds}s (not-after bound; not-before unprovable)",
+            f"fresh: signed {int(age)}s ago, within {max_age_seconds}s "
+            "(not-after bound; not-before unprovable)",
         )
     return False, f"STALE: signed {int(age)}s ago, exceeds {max_age_seconds}s bound"
