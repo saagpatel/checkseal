@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal, cast
 
 # FLAG: confirm the exact predicateType URI against home base's frozen VCR.
 PREDICATE_TYPE = "https://saagarpatel.dev/vcr/v0.2"
@@ -49,6 +49,14 @@ class Result(StrEnum):
     ERROR = "error"
     SKIP = "skip"
     NA = "n/a"
+
+    @property
+    def is_ok(self) -> bool:
+        return self not in (Result.FAIL, Result.ERROR, Result.OVER_BLOCKED)
+
+
+ResultState = Literal["pass", "fail", "over_blocked", "error", "skip", "n/a"]
+EnforcementState = Literal["enforced", "advisory", "observed"]
 
 
 class Enforced(StrEnum):
@@ -96,16 +104,18 @@ def _require(cond: bool, msg: str) -> None:
 
 def _sha256(v: Any, ctx: str) -> str:
     _require(isinstance(v, str), f"{ctx}: sha256 must be a string")
+    assert isinstance(v, str)
     v = v.strip().lower()
     _require(
         len(v) == _SHA256_LEN and all(c in "0123456789abcdef" for c in v),
         f"{ctx}: not a lowercase 64-hex sha256",
     )
-    return v
+    return cast(str, v)
 
 
 def _str(v: Any, ctx: str, *, max_len: int | None = None) -> str:
     _require(isinstance(v, str), f"{ctx}: must be a string")
+    assert isinstance(v, str)
     if max_len is not None:
         _require(len(v) <= max_len, f"{ctx}: exceeds {max_len} chars")
     return v
@@ -118,11 +128,11 @@ def parse_subject_kind(v: Any) -> str:
     home base. An unknown-but-well-formed kind is not a reason to refuse a seal;
     it is a reason to render conservatively. Non-strings are rejected.
     """
-    v = _str(v, "subject.kind")
+    kind = _str(v, "subject.kind")
     try:
-        return SubjectKind(v).value
+        return SubjectKind(kind).value
     except ValueError:
-        return v
+        return kind
 
 
 @dataclass(frozen=True)
@@ -291,7 +301,10 @@ class Runtime:
         _require(isinstance(d, dict), "runtime: must be an object")
         dur = d.get("duration_ms")
         if dur is not None:
-            _require(isinstance(dur, int) and not isinstance(dur, bool), "runtime.duration_ms: int")
+            _require(
+                isinstance(dur, int) and not isinstance(dur, bool) and dur >= 0,
+                "runtime.duration_ms: non-negative int",
+            )
         env = d.get("env_digest")
         env_digest = None
         if env is not None:
@@ -385,8 +398,10 @@ class Predicate:
         _require(isinstance(d, dict), "predicate: must be an object")
         checks = d.get("checks")
         _require(isinstance(checks, list) and len(checks) >= 1, "predicate.checks: non-empty list")
+        version = _str(d.get("vcr_version", VCR_VERSION), "vcr_version")
+        _require(version == VCR_VERSION, f"vcr_version must be {VCR_VERSION!r}")
         return Predicate(
             subject=Subject.from_jsonable(d.get("subject")),
             checks=[CheckEntry.from_jsonable(c) for c in checks],
-            vcr_version=_str(d.get("vcr_version", VCR_VERSION), "vcr_version"),
+            vcr_version=version,
         )

@@ -45,9 +45,7 @@ def parse_statement(d: Any) -> Predicate:
     )
     predicate = Predicate.from_jsonable(d.get("predicate"))
     subjects = d.get("subject")
-    _require(
-        isinstance(subjects, list) and len(subjects) == 1, "statement.subject: single-item list"
-    )
+    _require(isinstance(subjects, list) and len(subjects) == 1, "statement.subject: single-item list")
     s0 = subjects[0]
     _require(isinstance(s0, dict), "statement.subject[0]: object")
     dig = s0.get("digest")
