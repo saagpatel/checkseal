@@ -12,14 +12,42 @@ OIDC credential); this CLI covers the offline T1 path end to end.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import tempfile
+from collections.abc import Callable
 
 from .digest import sha256_file
-from .hbresolve import default_report_loader
-from .model import Subject, SubjectKind
+from .hbresolve import ReportLoader, default_report_loader
+from .model import CheckEntry, Subject, SubjectKind
 from .seal import assemble, sign_local
 from .store import JsonlSealStore
 from .verify import verify_local_seal
+
+REEXEC_TIMEOUT_SECONDS = 30
+
+
+def _write_atomic(path: str, content: str | bytes) -> None:
+    directory = os.path.dirname(os.path.abspath(path))
+    fd, temporary = tempfile.mkstemp(prefix=".checkseal-", dir=directory)
+    try:
+        if isinstance(content, bytes):
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(content)
+                fh.flush()
+                os.fsync(fh.fileno())
+        else:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content)
+                fh.flush()
+                os.fsync(fh.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _cmd_keygen(args: argparse.Namespace) -> int:
@@ -46,8 +74,7 @@ def _cmd_seal(args: argparse.Namespace) -> int:
     predicate = assemble(store, subject)
     signer = load_private_signer(args.key)
     seal = sign_local(predicate, signer, public=False)
-    with open(args.out, "w", encoding="utf-8") as fh:
-        fh.write(seal.to_intoto_jsonl() + "\n")
+    _write_atomic(args.out, seal.to_intoto_jsonl() + "\n")
     print(f"sealed {len(predicate.checks)} check(s) for {subject.name} -> {args.out}")
     return 0
 
@@ -70,7 +97,7 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 0 if report.passes(authentic_only=args.authentic_only) else 1
 
 
-def _build_reexecutor(command: str):
+def _build_reexecutor(command: str) -> Callable[[CheckEntry], bool]:
     """Real re-executor: run COMMAND for each enforced Grade-A check; exit 0 = confirmed.
 
     The check id and config_ref are passed in the environment so COMMAND can
@@ -82,20 +109,28 @@ def _build_reexecutor(command: str):
 
     argv = shlex.split(command)
 
-    def reexecute(entry) -> bool:
+    def reexecute(entry: CheckEntry) -> bool:
         env = {
             **os.environ,
             "CHECKSEAL_CHECK_ID": entry.check.id,
             "CHECKSEAL_CONFIG_REF": entry.check.config_ref or "",
         }
-        return subprocess.run(argv, env=env, capture_output=True).returncode == 0
+        try:
+            result = subprocess.run(argv, env=env, capture_output=True, timeout=REEXEC_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as exc:
+            tail = (exc.stderr or b"")[-1000:].decode("utf-8", errors="replace")
+            raise TimeoutError(f"timed out after {REEXEC_TIMEOUT_SECONDS}s; stderr tail: {tail}") from exc
+        if result.returncode != 0:
+            tail = result.stderr[-1000:].decode("utf-8", errors="replace")
+            raise RuntimeError(f"exit {result.returncode}; stderr tail: {tail}")
+        return True
 
     return reexecute
 
 
-def _build_loader(proof_root: str | None):
+def _build_loader(proof_root: str | None) -> ReportLoader | None:
     if not proof_root:
-        return default_report_loader
+        return None
 
     import os
 
@@ -119,6 +154,9 @@ def _cmd_seal_skillscan(args: argparse.Namespace) -> int:
     from .skillscan import seed_from_report
     from .store import CheckResult
 
+    if bool(args.key) != bool(args.out):
+        raise ValueError("--key and --out must be supplied together")
+
     with open(args.report, "rb") as fh:
         report_bytes = fh.read()
     try:
@@ -138,8 +176,7 @@ def _cmd_seal_skillscan(args: argparse.Namespace) -> int:
         store.append(CheckResult(seed.predicate.subject, entry))
 
     if seed.manifest_bytes is not None and args.manifest_out:
-        with open(args.manifest_out, "wb") as fh:
-            fh.write(seed.manifest_bytes)
+        _write_atomic(args.manifest_out, seed.manifest_bytes)
         print(f"wrote canonical bundle manifest -> {args.manifest_out} (this file IS the subject)")
 
     n = len(seed.predicate.checks)
@@ -148,10 +185,11 @@ def _cmd_seal_skillscan(args: argparse.Namespace) -> int:
         from .sign.local import load_private_signer
 
         seal = sign_local(seed.predicate, load_private_signer(args.key), public=False)
-        with open(args.out, "w", encoding="utf-8") as fh:
-            fh.write(seal.to_intoto_jsonl() + "\n")
+        _write_atomic(args.out, seal.to_intoto_jsonl() + "\n")
         print(f"sealed {n} scan check(s) for {subject.name} ({subject.digest[:12]}...) -> {args.out}")
     else:
+        if args.key or args.out:
+            raise ValueError("--key and --out must be supplied together")
         print(
             f"stored {n} scan check(s) for {subject.name} ({subject.digest[:12]}...) in {args.store}; "
             "seal with 'checkseal seal' (T1) or 'checkseal seal-keyless' (public T2)"
@@ -170,8 +208,7 @@ def _cmd_seal_keyless(args: argparse.Namespace) -> int:
     )
     predicate = assemble(JsonlSealStore(args.store), subject)
     seal = sign_keyless(predicate, identity_token=args.identity_token)
-    with open(args.out, "w", encoding="utf-8") as fh:
-        fh.write(seal.bundle_json or "")
+    _write_atomic(args.out, seal.bundle_json or "")
     print(f"keyless-sealed {len(predicate.checks)} check(s) for {subject.name} -> {args.out}")
     return 0
 
@@ -284,8 +321,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    return int(args.func(args))
+    try:
+        args = build_parser().parse_args(argv)
+        return int(args.func(args))
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"checkseal: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
