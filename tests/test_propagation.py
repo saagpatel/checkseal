@@ -5,8 +5,9 @@ and must fail if the fix regresses.
 
 from __future__ import annotations
 
-from checkseal.hbresolve import resolve_enforced_proof
-from checkseal.model import Enforced, EvidenceKind, Grade, Result
+from checkseal.digest import sha256_hex
+from checkseal.hbresolve import default_report_loader, resolve_enforced_proof
+from checkseal.model import Enforced, EnforcedProof, EvidenceKind, Grade, Result
 from checkseal.seal import assemble, sign_local
 from checkseal.store import CheckResult, JsonlSealStore
 from checkseal.verify import _freshness, verify_local_seal
@@ -19,7 +20,7 @@ def test_rename_attack_is_defeated_by_strong_binding(tmp_path):
     # check.id renamed so its class matches the corpus, but no config_sha256 bind.
     proof = write_hb_report(tmp_path / "hb.json", corpus="asi05-destructive-execution", config_sha256=None)
     entry = make_entry(check_id="review/destructive-execution", proof=proof)
-    res = resolve_enforced_proof(entry, proof)
+    res = resolve_enforced_proof(entry, proof, loader=default_report_loader)
     assert not res.resolved
     assert "weak binding" in res.reason
 
@@ -27,7 +28,7 @@ def test_rename_attack_is_defeated_by_strong_binding(tmp_path):
 def test_config_sha_mismatch_is_unproven(tmp_path):
     proof = write_hb_report(tmp_path / "hb.json", config_sha256="0" * 64)
     entry = make_entry(check_id="guard/destructive-execution", proof=proof)  # config_ref=VALID_SHA
-    res = resolve_enforced_proof(entry, proof)
+    res = resolve_enforced_proof(entry, proof, loader=default_report_loader)
     assert not res.resolved
     assert "weak binding" in res.reason
 
@@ -35,16 +36,29 @@ def test_config_sha_mismatch_is_unproven(tmp_path):
 def test_strong_binding_resolves(tmp_path):
     proof = write_hb_report(tmp_path / "hb.json", config_sha256=VALID_SHA)
     entry = make_entry(check_id="guard/destructive-execution", proof=proof)
-    res = resolve_enforced_proof(entry, proof)
+    res = resolve_enforced_proof(entry, proof, loader=default_report_loader)
     assert res.resolved and res.strong_binding
 
 
 def test_low_ees_is_unproven(tmp_path):
     proof = write_hb_report(tmp_path / "hb.json", ees=0.1)
     entry = make_entry(check_id="guard/destructive-execution", proof=proof)
-    res = resolve_enforced_proof(entry, proof)
+    res = resolve_enforced_proof(entry, proof, loader=default_report_loader)
     assert not res.resolved
     assert "efficacy" in res.reason
+
+
+def test_malformed_proof_values_propagate_as_unresolved():
+    malformed_reports = [
+        b"[]",
+        b'{"schema":"harnessbench-report/v1","corpus":"asi05-destructive-execution","ees":NaN,"verdicts":{"enforced":1,"advised":0,"permitted":1,"errors":0},"n":2}',
+        b'{"schema":"harnessbench-report/v1","corpus":"asi05-destructive-execution","ees":1,"verdicts":{"enforced":1.0,"advised":0,"permitted":1,"errors":0},"n":2}',
+    ]
+    for raw in malformed_reports:
+        proof = EnforcedProof(sha256=sha256_hex(raw), uri="test-report")
+        result = resolve_enforced_proof(make_entry(), proof, loader=lambda _uri, raw=raw: raw)
+        assert not result.resolved
+        assert result.reason.startswith("gate unproven:")
 
 
 # --- verdict.result must propagate (HIGH) ---

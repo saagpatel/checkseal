@@ -15,13 +15,15 @@ so the producer must exhibit a report that measured THIS exact config. Two asks
 of HarnessBench (N2) make that possible (see DESIGN.md CONTRACT-DELTA):
   (a) declare ``threat_class`` on each report;
   (b) declare the subject config's ``config_sha256`` on each report.
-Until HB ships (b), NOTHING resolves, and the verifier renders "gate unproven
-(weak binding)" rather than trusting a forgeable name match.
+Resolution requires a supplied resolver, and the CLI confines filesystem
+resolution to an explicit proof root. Whether live HarnessBench reports include
+(b) is external state and is not established by local fixtures.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -33,7 +35,7 @@ from .model import CheckEntry, EnforcedProof
 EES_FLOOR = 0.5
 
 # A report loader takes a URI and returns raw bytes. Injectable for tests and to
-# keep the verifier offline-first (default handles local paths and file://).
+# keep the verifier offline-first. The CLI applies a caller-selected proof root.
 ReportLoader = Callable[[str], bytes]
 
 
@@ -76,12 +78,14 @@ def resolve_enforced_proof(
     entry: CheckEntry,
     proof: EnforcedProof,
     *,
-    loader: ReportLoader = default_report_loader,
+    loader: ReportLoader | None = None,
 ) -> ProofResolution:
+    if loader is None:
+        return ProofResolution(False, "proof resolution requires an explicit root or supplied resolver")
     try:
         raw = loader(proof.uri)
-    except (OSError, ProofError) as exc:
-        return ProofResolution(False, f"proof unresolvable: {exc}")
+    except Exception as exc:
+        return ProofResolution(False, f"proof unresolvable ({type(exc).__name__}): {exc}")
 
     if sha256_hex(raw) != proof.sha256:
         return ProofResolution(
@@ -89,19 +93,34 @@ def resolve_enforced_proof(
         )
 
     try:
-        report: dict[str, Any] = json.loads(raw)
+        report: Any = json.loads(raw)
     except json.JSONDecodeError as exc:
         return ProofResolution(False, f"gate unproven: proof is not valid JSON ({exc})")
 
-    schema = str(report.get("schema", ""))
-    if not schema.startswith("harnessbench-report/"):
+    if not isinstance(report, dict):
+        return ProofResolution(False, "gate unproven: HarnessBench report must be a JSON object")
+
+    schema = report.get("schema")
+    if schema != "harnessbench-report/v1":
         return ProofResolution(False, f"gate unproven: not a HarnessBench report (schema={schema!r})")
 
-    corpus = str(report.get("corpus", ""))
+    if not isinstance(report.get("corpus"), str) or not report["corpus"]:
+        return ProofResolution(False, "gate unproven: report.corpus must be a non-empty string")
+
+    corpus = report["corpus"]
     threat_class = report.get("threat_class") or _infer_threat_class(corpus)
+    if not isinstance(threat_class, str):
+        return ProofResolution(False, "gate unproven: report.threat_class must be a string")
     check_class = _check_threat_class(entry)
     ees = report.get("ees")
-    ees_f = float(ees) if isinstance(ees, (int, float)) and not isinstance(ees, bool) else None
+    try:
+        ees_f = float(ees) if isinstance(ees, (int, float)) and not isinstance(ees, bool) else None
+    except OverflowError:
+        ees_f = None
+    if ees_f is None or not math.isfinite(ees_f) or not 0.0 <= ees_f <= 1.0:
+        return ProofResolution(
+            False, "gate unproven: report.ees must be finite and between 0 and 1", corpus=corpus
+        )
 
     # Necessary (not sufficient): the corpus threat class must cover the check.
     # NOTE: check_class is derived from the producer-controlled check.id, so this
@@ -116,9 +135,21 @@ def resolve_enforced_proof(
         )
 
     # The measured config must enforce, not merely advise.
-    verdicts = report.get("verdicts", {})
-    enforced = int(verdicts.get("enforced", 0)) if isinstance(verdicts, dict) else 0
-    advised = int(verdicts.get("advised", 0)) if isinstance(verdicts, dict) else 0
+    verdicts = report.get("verdicts")
+    if not isinstance(verdicts, dict):
+        return ProofResolution(False, "gate unproven: report.verdicts must be an object", corpus=corpus)
+    count_names = ("enforced", "advised", "permitted", "errors")
+    counts = [verdicts.get(name) for name in count_names]
+    if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in counts):
+        return ProofResolution(
+            False, "gate unproven: verdict counts must be non-negative integers", corpus=corpus
+        )
+    total = report.get("n")
+    if not isinstance(total, int) or isinstance(total, bool) or total < 0:
+        return ProofResolution(False, "gate unproven: report.n must be a non-negative integer", corpus=corpus)
+    enforced = verdicts["enforced"]
+    advised = verdicts["advised"]
+    assert isinstance(enforced, int) and isinstance(advised, int)
     if enforced <= 0 or advised > 0:
         return ProofResolution(
             False,
@@ -170,7 +201,8 @@ def resolve_enforced_proof(
 
     return ProofResolution(
         True,
-        f"enforced_proof resolved: config_sha256 bound, corpus {corpus!r} covers {check_class!r}, ees={ees_f}",
+        "enforced_proof resolved: config_sha256 bound, "
+        f"corpus {corpus!r} covers {check_class!r}, ees={ees_f}",
         corpus=corpus,
         threat_class=threat_class,
         ees=ees_f,

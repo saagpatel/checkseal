@@ -41,6 +41,13 @@ _SUBJECT_KINDS = (
 )
 
 
+def is_agent_tooling_subject(kind: str, media_type: str | None) -> bool:
+    return kind in (SubjectKind.SKILL_BUNDLE.value, SubjectKind.MCP_SERVER.value) or media_type in {
+        BUNDLE_MANIFEST_MEDIA_TYPE,
+        MCPB_MEDIA_TYPE,
+    }
+
+
 def validate_agent_tooling_profile(predicate: Predicate, *, public: bool) -> None:
     """Raise VCRError if the predicate violates the agent-tooling profile.
 

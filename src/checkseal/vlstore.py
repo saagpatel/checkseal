@@ -14,13 +14,14 @@ from __future__ import annotations
 import importlib
 import json
 from collections.abc import Iterator
+from typing import Any
 
 from .digest import canonical_bytes
 from .model import Authority, CheckEntry, VCRError
 from .store import CheckResult, SealStore, T0Record
 
 
-def _load_vl() -> tuple:
+def _load_vl() -> tuple[Any, Any]:
     # importlib keeps the optional dependency invisible to static analysis: the module
     # type-checks and imports without the extra; only *using* the store needs VL.
     try:

@@ -32,8 +32,8 @@ plan.
 
 ## The four decisions
 
-**D1 — Build on Verification Ledger vs standalone → standalone, VL as an
-optional backend later.** VL's `Record` (`payload`, `source_trust`, `durable`,
+**D1 — Build on Verification Ledger vs standalone → standalone, with an
+optional adapter.** VL's `Record` (`payload`, `source_trust`, `durable`,
 `actionable`) is a *coordination* record; a check result is an *attestation
 over an artifact* (subject digest + checks + verdicts + evidence + signature).
 Different nouns. "Sealing from VL records" in v1 would mean stuffing a VCR
@@ -43,32 +43,25 @@ uses). VL and CheckSeal align at the **provenance-typing** layer (VL `Trust` ↔
 VCR `provenance.authority`; VL-3 envelope ↔ `instruction_boundary`), and that
 alignment is already in the frozen VCR schema CheckSeal produces. So: standalone
 store behind a narrow `SealStore` interface deliberately shaped to be satisfiable
-by a VL `LedgerAdapter`. A VL-backed store (payload = check result, source_trust
-= provenance.authority) is a drop-in optional extra post-skeleton, where VL's
-retention (VL-4) and provenance typing (VL-1) earn their place for a real fleet.
-"Do not assume it" satisfied: evaluated, declined the weld, gave it a concrete
-adoption path.
+by a VL `LedgerAdapter`. The optional adapter exists in `src/checkseal/vlstore.py`;
+it is not wired into the CLI or currently scheduled for expansion. VL's retention
+(VL-4) and provenance typing (VL-1) remain the reasons to choose it for a fleet.
 
 **D2 — Serialization → standalone `.intoto.jsonl`, DSSE-wrapped.** in-toto's
 native form; C2PA embedding reserved as a pluggable backend (Risk #2 mitigation
 baked in).
 
-**D3 — Signing → per-bundle, per the frozen profile, and the failure mode
-dissolves.** One signature over one subject's checks. The "one bad digest kills
-the whole seal" worry does not bite: the signature covers the Statement bytes as
-claimed at seal time and stays valid; each check carries its own
-`evidence.digest`, so freshness and re-execution are per-check computations the
-*verifier* runs live. A stale digest fails only that check and downgrades its
-`trust_floor`; it never invalidates the signature or the other checks. The
-signature attests the claim; the verifier computes current truth per check.
+**D3 — Signing → per-bundle, per the frozen profile.** One signature covers one
+subject's checks and authenticates the producer's claims, including each
+`evidence.digest`. CheckSeal does not resolve evidence URIs or recompute those
+digests. The verifier does recompute the live subject digest and may re-execute
+eligible Grade-A checks; evidence content remains producer-trusted.
 
-**D4 — `/receipts` verify → CLI is the full contract, page is an honest
-subset.** Step 3 (re-execute) and full step 4 (HarnessBench resolution) cannot
-run in a browser. The verifier **CLI** does all six steps; the `/receipts` page
-does the browser-doable subset (recompute live subject digest, check signature +
-Rekor inclusion, render `trust_floor`) and states loudly what it did *not* check.
-Hosted re-execution is a security hole and adoption theater; reserved for full
-ambition.
+**D4 — `examples/receipts.html` verify → CLI is the full contract, page is an
+honest subset.** The browser page recomputes the live subject digest, checks
+Statement/predicate coupling and the Ed25519 signature, and renders `trust_floor`.
+It does not verify Rekor inclusion, re-execute checks, or resolve HarnessBench
+proofs. Evidence digests remain producer assertions in both clients.
 
 ## CONTRACT-DELTA FOR HOME BASE
 
@@ -95,10 +88,9 @@ binding is a cryptographic one, so `resolve_enforced_proof` requires:
    `config_sha256` to equal the seal's `check.config_ref`, so a producer must
    exhibit a HarnessBench report that measured THIS exact config.
 
-Until HarnessBench ships (2), **nothing resolves**: the verifier renders "gate
-unproven (weak binding)" and a public enforced seal cannot pass. That is the
-honest current state, and it is a concrete N2 dependency for Phase 3, not a
-cosmetic note. The rename attack and the weak-binding refusal are locked by
+Until a HarnessBench report provides (2), **nothing resolves**: the verifier renders "gate
+unproven (weak binding)" and an enforced seal cannot pass. This is an external
+report-contract dependency. The rename attack and the weak-binding refusal are locked by
 `tests/test_propagation.py`.
 
 ## Modeling choices I own (flagged, not core-schema changes)
@@ -132,17 +124,11 @@ for its live tier.
   keyless implemented), N1 profile validation.
 - **Phase 2 (done):** verifier CLI implementing all six contract steps,
   including step-4 corpus-relevance; conformance/honesty tests.
-- **Phase 3 (in progress):** the `/receipts` client-side honest-subset verifier
-  is built in JavaScript (`js/checkseal_verify.mjs`) and proven cross-language: a
-  Python-signed seal verifies in the browser/Node verifier, and tamper, wrong-key,
-  and malformed-payload are all caught (`node --test js/`). The T2 keyless path has
-  a CLI (`seal-keyless` / `verify-keyless`) and a GitHub Actions workflow
-  (`.github/workflows/seal.yml`, `id-token: write`) that mints a public seal via
-  OIDC. REMAINING and gated: (i) a public *enforced* seal is blocked until N2 ships
-  `config_sha256`; (ii) sealing the real essay + tool artifacts and wiring the live
-  `/receipts` page + publish are outward-facing and operator-gated.
-- **Phase 4 (later):** VL-backed store extra, C2PA embedding backend, hosted
-  verifier, PyPI release, in-toto/C2PA community engagement.
+- **Phase 3 (implemented locally):** the JavaScript honest-subset verifier,
+  T2 CLI, and manual OIDC workflow exist. Hosted receipt delivery and live
+  provider behavior are not claimed by local tests.
+- **Verification Ledger adapter:** an optional backend exists. No additional
+  ledger integration phase is currently scheduled.
 
 ## Agent-tooling profile (added 2026-08-24)
 
@@ -168,16 +154,15 @@ is reserved so the manifest lands later without a breaking change.
 `cryptography` present, `sigstore` absent (T2 is CI-exercised). 32 tests pass,
 including the post-review regression suite (`tests/test_propagation.py`).
 
-CLI walking-skeleton demo, two cases:
-- Against the **real shipped** `semantic-clean-room.v1.json` row *today*: the
-  enforced gate renders "gate unproven (weak binding)" and VERDICT FAIL, because
-  HarnessBench does not yet declare `config_sha256`. This is the honest result.
-- Against an N2-ready copy of that row that declares `config_sha256`: the proof
-  resolves (corpus covers the check, ees=1.0, config-sha bound), trust_floor 2,
-  VERDICT PASS.
+CLI proof example, two cases:
+- The repository's `semantic-clean-room.v1.json` sample lacks `config_sha256`,
+  so verification renders "gate unproven (weak binding)" and FAIL.
+- An in-memory N2-shaped test report that declares `config_sha256` resolves
+  synthetically (corpus covers the check, ees=1.0, config-sha bound). It is not
+  evidence that a live HarnessBench report has that field or that a hosted proof passes.
 
-The gap between the two is exactly CONTRACT-DELTA ask (2), and it blocks a public
-enforced seal until N2 ships it.
+The live HarnessBench report contract remains unverified here. A public enforced
+seal cannot pass without a report that supplies the matching config digest.
 
 ## Review
 

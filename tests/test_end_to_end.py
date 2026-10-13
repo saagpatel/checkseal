@@ -51,6 +51,7 @@ def test_seal_and_verify_happy_path(tmp_path, local_signer):
         verifier,
         subject_path=str(subject_file),
         reexecutor=lambda _e: True,
+        loader=lambda uri: open(uri, "rb").read(),
     )
     assert report.ok, report.render()
     assert report.subject_digest_ok

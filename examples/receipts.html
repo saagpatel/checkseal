@@ -70,27 +70,36 @@
 
       function floorClass(f) { return f === 2 ? "f2" : f === 1 ? "f1" : "f0"; }
 
+      function text(tag, value, className) {
+        const node = document.createElement(tag);
+        node.textContent = String(value);
+        if (className) node.className = className;
+        return node;
+      }
+
       async function run() {
         const r = await verifySeal({ envelope, artifactBytes, publicKeyRaw: keyRaw });
-        const rows = r.entries
-          .map(
-            (e) => `<div class="check"><strong>${e.checkId}</strong>
-              <span class="floor ${floorClass(e.trustFloor)}">trust_floor: ${e.trustFloorLabel}</span>
-              <div class="note">result: ${e.result} · binding: ${e.enforced}</div></div>`
-          )
-          .join("");
-        const subj = r.subjectDigestOk
-          ? `<span class="ok">subject digest verified</span>`
-          : `<span class="dim">subject digest: ${r.subjectReason}</span>`;
-        document.getElementById("card").innerHTML = `
-          <div class="note">signature: ${r.signatureOk ? '<span class="ok">valid</span>' : '<span class="no">invalid</span>'}
-            · coupling: ${r.subjectCoupled ? "ok" : "MISMATCH"} · ${subj}</div>
-          ${rows}
-          <p class="verdict">browser-checkable subset:
-            <span class="${r.authenticSubset ? "ok" : "no"}">${r.authenticSubset ? "PASS" : "INCOMPLETE"}</span></p>`;
-        document.getElementById("notchecked").innerHTML =
-          "Not checked in the browser (run the CheckSeal CLI for the full contract): " +
-          r.notChecked.join("; ") + ".";
+        const card = document.getElementById("card");
+        card.replaceChildren();
+        const summary = text("div", "", "note");
+        summary.append("signature: ");
+        summary.append(text("span", r.signatureOk ? "valid" : "invalid", r.signatureOk ? "ok" : "no"));
+        summary.append(` · coupling: ${r.subjectCoupled ? "ok" : "MISMATCH"} · subject digest: ${r.subjectDigestOk ? "verified" : r.subjectReason}`);
+        card.append(summary);
+        for (const e of r.entries) {
+          const row = text("div", "", "check");
+          row.append(text("strong", e.checkId));
+          row.append(document.createTextNode(" "));
+          row.append(text("span", `trust_floor: ${e.trustFloorLabel}`, `floor ${floorClass(e.trustFloor)}`));
+          row.append(text("div", `result: ${e.result} · binding: ${e.enforced}`, "note"));
+          card.append(row);
+        }
+        const verdict = text("p", "", "verdict");
+        verdict.append("browser-checkable subset: ");
+        verdict.append(text("span", r.authenticSubset ? "PASS" : "INCOMPLETE", r.authenticSubset ? "ok" : "no"));
+        card.append(verdict);
+        document.getElementById("notchecked").textContent =
+          "Not checked in the browser (run the CheckSeal CLI for the full contract): " + r.notChecked.join("; ") + ".";
       }
 
       document.getElementById("artifact").addEventListener("change", async (ev) => {

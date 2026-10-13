@@ -52,6 +52,15 @@ jobs:
             --name "$CS_NAME" \
             --kind "$CS_KIND" \
             --out seal.sigstore.json
+      - name: Verify the produced T2 seal
+        env:
+          CS_SUBJECT: ${{ inputs.subject }}
+          CS_IDENTITY: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/seal.yml@${{ github.ref }}
+        run: |
+          python -m checkseal verify-keyless seal.sigstore.json \
+            --subject "$CS_SUBJECT" \
+            --identity "$CS_IDENTITY" \
+            --issuer "https://token.actions.githubusercontent.com"
       - name: Upload the seal
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

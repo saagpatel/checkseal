@@ -204,6 +204,13 @@ def test_profile_composes_with_n1():
         validate_agent_tooling_profile(Predicate(subject=subject, checks=[]), public=False)
 
 
+def test_signing_enforces_agent_tooling_profile(tmp_path, local_signer):
+    subject, _ = bundle_subject()
+    invalid = Predicate(subject=subject, checks=[scan_entry(enforced=Enforced.ENFORCED)])
+    with pytest.raises(VCRError, match="unprovable"):
+        sign_local(invalid, local_signer, public=False)
+
+
 # --- error is not clean -----------------------------------------------------
 
 

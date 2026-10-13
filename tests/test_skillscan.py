@@ -79,9 +79,8 @@ def test_runtime_namespace_in_report_is_rejected_by_profile():
     report = make_report(
         checks=[{"id": "runtime/observed-egress", "result": "pass", "findings": 0, "detail": []}]
     )
-    seed = seed_from_report(report, FIXTURE_BUNDLE)  # parse is shape-only...
-    with pytest.raises(VCRError, match="reserved"):  # ...the profile holds the line
-        validate_agent_tooling_profile(seed.predicate, public=False)
+    with pytest.raises(VCRError, match="reserved"):
+        seed_from_report(report, FIXTURE_BUNDLE)
 
 
 def test_cli_seal_skillscan_end_to_end(tmp_path, local_signer):

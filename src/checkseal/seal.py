@@ -17,10 +17,10 @@ from .model import Predicate, Subject, VCRError
 from .profile import validate_n1_profile
 from .sign.base import Signer, SigningTier
 from .statement import build_statement, statement_bytes
-from .store import JsonlSealStore
+from .store import SealStore
 
 
-def assemble(store: JsonlSealStore, subject: Subject) -> Predicate:
+def assemble(store: SealStore, subject: Subject) -> Predicate:
     """Collect every stored check for a subject into one predicate."""
     entries = store.read_for_subject(subject.digest)
     if not entries:
@@ -48,6 +48,10 @@ class Seal:
 def sign_local(predicate: Predicate, signer: Signer, *, public: bool = False) -> Seal:
     """Sign with a local (T1) or unsigned-marker signer. Not valid for public N1."""
     validate_n1_profile(predicate, public=public)
+    from .profile_agent_tooling import is_agent_tooling_subject, validate_agent_tooling_profile
+
+    if is_agent_tooling_subject(predicate.subject.kind, predicate.subject.media_type):
+        validate_agent_tooling_profile(predicate, public=public)
     if public and signer.tier is not SigningTier.T2:
         raise VCRError(
             f"public N1 seals must be T2 keyless; refusing to sign public seal at tier {signer.tier.value}"
@@ -64,6 +68,10 @@ def sign_local(predicate: Predicate, signer: Signer, *, public: bool = False) ->
 def sign_keyless(predicate: Predicate, *, identity_token: str | None = None) -> Seal:
     """Sign a public seal with T2 Sigstore keyless. Requires the keyless extra."""
     validate_n1_profile(predicate, public=True)
+    from .profile_agent_tooling import is_agent_tooling_subject, validate_agent_tooling_profile
+
+    if is_agent_tooling_subject(predicate.subject.kind, predicate.subject.media_type):
+        validate_agent_tooling_profile(predicate, public=True)
     from .sign.keyless import sign_statement_keyless
 
     statement = build_statement(predicate)

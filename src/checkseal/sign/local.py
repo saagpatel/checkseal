@@ -86,6 +86,8 @@ class LocalKeyVerifier(SignatureVerifier):
 
 
 def write_private_pem(signer: LocalKeySigner, path: str) -> None:
+    import os
+
     from cryptography.hazmat.primitives import serialization
 
     pem = signer._key.private_bytes(  # noqa: SLF001 - key IO helper
@@ -93,8 +95,15 @@ def write_private_pem(signer: LocalKeySigner, path: str) -> None:
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    with open(path, "wb") as fh:
-        fh.write(pem)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fd = -1
+            fh.write(pem)
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def load_private_signer(path: str) -> LocalKeySigner:

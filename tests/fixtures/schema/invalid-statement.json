@@ -1,0 +1,16 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [{"name": "sample", "digest": {"sha256": "0000000000000000000000000000000000000000000000000000000000000000"}}],
+  "predicateType": "https://saagarpatel.dev/vcr/v0.2",
+  "predicate": {
+    "vcr_version": "0.3",
+    "subject": {"kind": "future-kind", "digest": {"sha256": "0000000000000000000000000000000000000000000000000000000000000000"}, "name": "sample"},
+    "checks": [{
+      "check": {"id": "review/example", "kind": "review", "version": "1"},
+      "verdict": {"result": "pass", "enforced": "advisory"},
+      "evidence": {"kind": "log-digest", "grade": "B", "digest": {"sha256": "0000000000000000000000000000000000000000000000000000000000000000"}},
+      "runtime": {"ran_at": "2026-01-01T00:00:00Z", "runner": "ci", "duration_ms": -1},
+      "provenance": {"authority": "operator", "instruction_boundary": {"kind": "stored_data_not_instructions"}}
+    }]
+  }
+}
