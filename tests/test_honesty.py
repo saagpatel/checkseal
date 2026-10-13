@@ -7,8 +7,11 @@ report whose corpus threat-class actually covers the check.
 
 from __future__ import annotations
 
-from checkseal.hbresolve import resolve_enforced_proof
-from checkseal.model import Enforced, Grade
+import pytest
+
+from checkseal.digest import sha256_hex
+from checkseal.hbresolve import default_report_loader, resolve_enforced_proof
+from checkseal.model import Enforced, EnforcedProof, Grade
 from checkseal.seal import assemble, sign_local
 from checkseal.store import CheckResult, JsonlSealStore
 from conftest import make_entry, make_subject, write_hb_report
@@ -17,7 +20,7 @@ from conftest import make_entry, make_subject, write_hb_report
 def test_matching_corpus_resolves(tmp_path):
     proof = write_hb_report(tmp_path / "hb.json", corpus="asi05-destructive-execution")
     entry = make_entry(check_id="guard/destructive-execution", proof=proof)
-    res = resolve_enforced_proof(entry, proof)
+    res = resolve_enforced_proof(entry, proof, loader=default_report_loader)
     assert res.resolved, res.reason
     assert res.threat_class == "destructive-execution"
 
@@ -26,7 +29,7 @@ def test_corpus_mismatch_is_unproven(tmp_path):
     # A content rights-gate CANNOT be proven by a destructive-execution corpus.
     proof = write_hb_report(tmp_path / "hb.json", corpus="asi05-destructive-execution")
     entry = make_entry(check_id="review/rights-gate", proof=proof)
-    res = resolve_enforced_proof(entry, proof)
+    res = resolve_enforced_proof(entry, proof, loader=default_report_loader)
     assert not res.resolved
     assert "corpus mismatch" in res.reason
 
@@ -36,7 +39,7 @@ def test_digest_mismatch_is_unproven(tmp_path):
     # rewrite the report so its bytes no longer match proof.sha256
     (tmp_path / "hb.json").write_bytes(b'{"schema":"harnessbench-report/v1","corpus":"x"}')
     entry = make_entry(check_id="guard/destructive-execution", proof=proof)
-    res = resolve_enforced_proof(entry, proof)
+    res = resolve_enforced_proof(entry, proof, loader=default_report_loader)
     assert not res.resolved
     assert "content digest" in res.reason
 
@@ -44,7 +47,7 @@ def test_digest_mismatch_is_unproven(tmp_path):
 def test_config_that_only_advises_is_unproven(tmp_path):
     proof = write_hb_report(tmp_path / "hb.json", enforced=0, advised=46)
     entry = make_entry(check_id="guard/destructive-execution", proof=proof)
-    res = resolve_enforced_proof(entry, proof)
+    res = resolve_enforced_proof(entry, proof, loader=default_report_loader)
     assert not res.resolved
     assert "does not enforce" in res.reason
 
@@ -72,6 +75,7 @@ def test_full_verify_rejects_the_over_claim(tmp_path, local_signer):
         local_signer.verifier(),
         subject_path=str(subject_file),
         reexecutor=lambda _e: True,  # even with re-execution "confirmed"...
+        loader=lambda uri: open(uri, "rb").read(),
     )
     # ...the seal still fails, because the proof does not cover the check.
     assert report.signature_ok and report.subject_digest_ok
@@ -79,3 +83,37 @@ def test_full_verify_rejects_the_over_claim(tmp_path, local_signer):
     assert "corpus mismatch" in rg.enforced_proof
     assert not rg.ok
     assert not report.ok
+
+
+@pytest.mark.parametrize(
+    ("raw", "reason"),
+    [
+        (b"[]", "JSON object"),
+        (
+            b'{"schema":"harnessbench-report/v1","corpus":"asi05-destructive-execution","ees":NaN,"verdicts":{"enforced":1,"advised":0,"permitted":1,"errors":0},"n":2}',
+            "finite",
+        ),
+        (
+            b'{"schema":"harnessbench-report/v1","corpus":"asi05-destructive-execution","ees":1,"verdicts":{"enforced":1.0,"advised":0,"permitted":1,"errors":0},"n":2}',
+            "integers",
+        ),
+        (
+            b'{"schema":"harnessbench-report/v2","corpus":"asi05-destructive-execution","ees":1,"verdicts":{"enforced":1,"advised":0,"permitted":1,"errors":0},"n":2}',
+            "report",
+        ),
+        (
+            b'{"schema":"harnessbench-report/v1","corpus":"asi05-destructive-execution","ees":'
+            + b"9" * 400
+            + b',"verdicts":{"enforced":1,"advised":0,"permitted":1,"errors":0},"n":2}',
+            "finite",
+        ),
+    ],
+)
+def test_malformed_proof_report_fails_closed(raw, reason):
+    result = resolve_enforced_proof(
+        make_entry(),
+        EnforcedProof(sha256=sha256_hex(raw), uri="injected"),
+        loader=lambda _uri: raw,
+    )
+    assert not result.resolved
+    assert reason in result.reason
