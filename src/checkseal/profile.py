@@ -35,11 +35,7 @@ def validate_n1_profile(predicate: Predicate, *, public: bool) -> None:
                 f"{entry.provenance.authority.value!r}; grade C requires operator attestation"
             )
 
-        if (
-            public
-            and entry.verdict.enforced is Enforced.ENFORCED
-            and entry.verdict.enforced_proof is None
-        ):
+        if public and entry.verdict.enforced is Enforced.ENFORCED and entry.verdict.enforced_proof is None:
             raise VCRError(
                 f"N1: public seal claims check {cid!r} is enforced but carries no "
                 "enforced_proof. Emit it as advisory, or attach a HarnessBench proof."

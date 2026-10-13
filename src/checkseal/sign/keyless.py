@@ -42,7 +42,7 @@ def sign_statement_keyless(statement: dict[str, Any], *, identity_token: str | N
     """
     _import_sigstore()
     from sigstore.oidc import IdentityToken, detect_credential
-    from sigstore.sign import ClientTrustConfig, SigningContext
+    from sigstore.sign import ClientTrustConfig, SigningContext  # type: ignore[attr-defined]
 
     raw_token = identity_token or detect_credential()
     if raw_token is None:  # pragma: no cover - CI/OIDC only
