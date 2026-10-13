@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 from .bundle import archive_digest, canonical_manifest
 from .digest import sha256_hex
@@ -54,13 +55,14 @@ class SkillscanSeed:
     manifest_bytes: bytes | None  # the canonical manifest (directory-form subjects only)
 
 
-def parse_report(report_bytes: bytes) -> dict:
+def parse_report(report_bytes: bytes) -> dict[str, Any]:
     """Structurally validate the untrusted report JSON. Raises VCRError."""
     try:
         d = json.loads(report_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise VCRError(f"skillscan report is not valid UTF-8 JSON: {exc}") from exc
     _require(isinstance(d, dict), "skillscan report: must be an object")
+    assert isinstance(d, dict)
     schema = _str(d.get("schema"), "report.schema")
     _require(schema == REPORT_SCHEMA, f"report.schema: expected {REPORT_SCHEMA!r}, got {schema!r}")
     _str(d.get("scanner"), "report.scanner")
@@ -69,9 +71,11 @@ def parse_report(report_bytes: bytes) -> dict:
     _require(isinstance(d.get("subject"), dict), "report.subject: must be an object")
     ruleset = d.get("ruleset")
     _require(isinstance(ruleset, dict), "report.ruleset: must be an object")
+    assert isinstance(ruleset, dict)
     _sha256(ruleset.get("config_sha256"), "report.ruleset.config_sha256")
     checks = d.get("checks")
     _require(isinstance(checks, list) and len(checks) >= 1, "report.checks: non-empty list")
+    assert isinstance(checks, list)
     for c in checks:
         _require(isinstance(c, dict), "report check: must be an object")
         _str(c.get("id"), "report check.id")
@@ -80,10 +84,10 @@ def parse_report(report_bytes: bytes) -> dict:
             result in _RESULTS,
             f"report check.result: {result!r} not in pass/fail/error (skip and n/a are not emittable)",
         )
-    return d
+    return cast(dict[str, Any], d)
 
 
-def derive_subject(report: dict, bundle_path: str | Path) -> tuple[Subject, bytes | None]:
+def derive_subject(report: dict[str, Any], bundle_path: str | Path) -> tuple[Subject, bytes | None]:
     """Rebuild the subject from the bundle bytes and refuse a report that disagrees.
 
     Returns (subject, manifest_bytes) — manifest_bytes only for the directory form.
@@ -147,8 +151,12 @@ def seed_from_report(
         )
         for c in report["checks"]
     ]
-    return SkillscanSeed(
+    seed = SkillscanSeed(
         predicate=Predicate(subject=subject, checks=entries),
         report_digest=report_digest,
         manifest_bytes=manifest_bytes,
     )
+    from .profile_agent_tooling import validate_agent_tooling_profile
+
+    validate_agent_tooling_profile(seed.predicate, public=False)
+    return seed
