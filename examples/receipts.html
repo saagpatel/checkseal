@@ -46,7 +46,7 @@
     </main>
 
     <script type="module">
-      import { verifySeal } from "../js/checkseal_verify.mjs";
+      import { parseUniqueJson, verifySeal } from "../js/checkseal_verify.mjs";
 
       const SEAL_URL = "./artifacts/field-manual.intoto.jsonl";
       const KEY_URL = "./artifacts/field-manual.verify-key.pem";
@@ -63,7 +63,7 @@
 
       async function load() {
         const sealText = await (await fetch(SEAL_URL)).text();
-        envelope = JSON.parse(sealText.trim().split("\n")[0]);
+        envelope = parseUniqueJson(sealText.trim().split("\n")[0]);
         keyRaw = pemToRaw(await (await fetch(KEY_URL)).text());
         await run();
       }

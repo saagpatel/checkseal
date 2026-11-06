@@ -87,6 +87,12 @@ function rejectDuplicateObjectKeys(text) {
   }
 }
 
+export function parseUniqueJson(text) {
+  const value = JSON.parse(text);
+  rejectDuplicateObjectKeys(text);
+  return value;
+}
+
 function validateStatement(statement) {
   if (!object(statement) || statement._type !== STATEMENT_TYPE) throw new Error("unsupported Statement type");
   if (statement.predicateType !== PREDICATE_TYPE) throw new Error("unsupported predicate type");
@@ -129,8 +135,7 @@ export async function verifySeal({ envelope, artifactBytes, publicKeyRaw }) {
   try {
     payload = b64ToBytes(envelope.payload);
     const payloadText = new TextDecoder("utf-8", { fatal: true }).decode(payload);
-    statement = JSON.parse(payloadText);
-    rejectDuplicateObjectKeys(payloadText);
+    statement = parseUniqueJson(payloadText);
     validateStatement(statement);
     predicate = statement.predicate;
     if (!predicate || !predicate.subject || !predicate.subject.digest) {
