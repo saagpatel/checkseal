@@ -60,6 +60,33 @@ function trustFloor(entry) {
 
 function object(value) { return value !== null && typeof value === "object" && !Array.isArray(value); }
 
+function rejectDuplicateObjectKeys(text) {
+  const objects = [];
+  for (let i = 0; i < text.length;) {
+    if (text[i] === '"') {
+      let end = i + 1;
+      while (end < text.length) {
+        if (text[end] === "\\") end += 2;
+        else if (text[end] === '"') break;
+        else end += 1;
+      }
+      let next = end + 1;
+      while (/\s/.test(text[next] || "")) next += 1;
+      if (text[next] === ":" && objects.length) {
+        const key = JSON.parse(text.slice(i, end + 1));
+        const current = objects[objects.length - 1];
+        if (current.has(key)) throw new Error("duplicate JSON object member");
+        current.add(key);
+      }
+      i = end + 1;
+    } else {
+      if (text[i] === "{") objects.push(new Set());
+      else if (text[i] === "}") objects.pop();
+      i += 1;
+    }
+  }
+}
+
 function validateStatement(statement) {
   if (!object(statement) || statement._type !== STATEMENT_TYPE) throw new Error("unsupported Statement type");
   if (statement.predicateType !== PREDICATE_TYPE) throw new Error("unsupported predicate type");
@@ -101,7 +128,9 @@ export async function verifySeal({ envelope, artifactBytes, publicKeyRaw }) {
   let predicate;
   try {
     payload = b64ToBytes(envelope.payload);
-    statement = JSON.parse(new TextDecoder().decode(payload));
+    const payloadText = new TextDecoder("utf-8", { fatal: true }).decode(payload);
+    statement = JSON.parse(payloadText);
+    rejectDuplicateObjectKeys(payloadText);
     validateStatement(statement);
     predicate = statement.predicate;
     if (!predicate || !predicate.subject || !predicate.subject.digest) {

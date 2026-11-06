@@ -36,6 +36,20 @@ test("valid Python-signed seal verifies in JS", async () => {
   assert.equal(r.entries[0].trustFloor, 1); // advisory + grade B
 });
 
+test("signed statements with duplicate identity or digest fields are malformed", async () => {
+  const f = fixture();
+  for (const envelope of [f.duplicate_identity_envelope, f.duplicate_digest_envelope]) {
+    const r = await verifySeal({
+      envelope,
+      artifactBytes: b64(f.artifact_b64),
+      publicKeyRaw: b64(f.pubkey_raw_b64),
+    });
+    assert.equal(r.malformed, true, JSON.stringify(r));
+    assert.equal(r.authenticSubset, false, JSON.stringify(r));
+    assert.match(r.signatureReason, /duplicate JSON object member/);
+  }
+});
+
 test("tampered artifact is caught (digest mismatch)", async () => {
   const f = fixture();
   const r = await verifySeal({

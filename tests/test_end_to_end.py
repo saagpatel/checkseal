@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from checkseal.model import CheckKind, Enforced, EvidenceKind, Grade, Result
 from checkseal.seal import assemble, sign_local
 from checkseal.store import CheckResult, JsonlSealStore
@@ -75,6 +79,45 @@ def test_tampered_subject_is_caught(tmp_path, local_signer):
     )
     assert not report.subject_digest_ok
     assert not report.ok
+
+
+@pytest.mark.parametrize("field", ["identity", "digest"])
+def test_duplicate_signed_subject_field_is_rejected(tmp_path, local_signer, field, capsys):
+    from checkseal.__main__ import main
+    from checkseal.dsse import PAYLOAD_TYPE, Envelope, pae
+    from checkseal.model import VCRError
+    from checkseal.sign.local import write_public_pem
+    from checkseal.verify import verify_local_seal
+
+    proof = write_hb_report(tmp_path / "hb.json")
+    subject_file, seal_path = _seal_two_checks(tmp_path, local_signer, proof)
+    envelope = Envelope.from_jsonable(json.loads(seal_path.read_text().splitlines()[0]))
+    payload = envelope.payload
+    if field == "identity":
+        marker = b'"name":"tool/core-guard"'
+        replacement = b'"name":"forged/identity","na\\u006de":"tool/core-guard"'
+    else:
+        digest = json.loads(payload)["predicate"]["subject"]["digest"]["sha256"].encode()
+        marker = b'"subject":{"digest":{"sha256":"' + digest + b'"'
+        replacement = b'"subject":{"digest":{"sha256":"' + b"f" * 64 + b'","sha256":"' + digest + b'"'
+    assert marker in payload
+    payload = payload.replace(marker, replacement, 1)
+    signature = local_signer.sign(pae(PAYLOAD_TYPE, payload))
+    assert local_signer.verifier().verify(pae(PAYLOAD_TYPE, payload), signature)
+    seal_path.write_text(json.dumps(Envelope(payload, PAYLOAD_TYPE, [signature]).to_jsonable()) + "\n")
+    with pytest.raises(VCRError, match="duplicate JSON object member"):
+        verify_local_seal(
+            str(seal_path),
+            local_signer.verifier(),
+            subject_path=str(subject_file),
+            reexecutor=lambda _e: True,
+            loader=lambda uri: open(uri, "rb").read(),
+        )
+    public_key = tmp_path / "fixture.public.pem"
+    write_public_pem(local_signer, str(public_key))
+    result = main(["verify", str(seal_path), "--subject", str(subject_file), "--pubkey", str(public_key)])
+    assert result == 2
+    assert "duplicate JSON object member" in capsys.readouterr().err
 
 
 def test_wrong_key_fails_signature(tmp_path, local_signer):
