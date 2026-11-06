@@ -13,6 +13,7 @@ import json
 from cryptography.hazmat.primitives import serialization
 
 from checkseal.digest import sha256_hex
+from checkseal.dsse import PAYLOAD_TYPE, Envelope, pae
 from checkseal.model import (
     Authority,
     Check,
@@ -56,10 +57,32 @@ def main() -> None:
     seal = sign_local(predicate, signer, public=False)
     other = LocalKeySigner.generate()
 
+    raw = seal.envelope.payload
+    duplicate_identity = raw.replace(
+        b'"name":"essay/stranded"',
+        b'"name":"forged/identity","na\\u006de":"essay/stranded"',
+        1,
+    )
+    digest_marker = b'"subject":{"digest":{"sha256":"' + subject.digest.encode() + b'"'
+    duplicate_digest = raw.replace(
+        digest_marker,
+        b'"subject":{"digest":{"sha256":"' + b"f" * 64 + b'","sha256":"' + subject.digest.encode() + b'"',
+        1,
+    )
+    assert duplicate_identity != raw and duplicate_digest != raw
+    duplicate_identity_envelope = Envelope(
+        duplicate_identity, PAYLOAD_TYPE, [signer.sign(pae(PAYLOAD_TYPE, duplicate_identity))]
+    ).to_jsonable()
+    duplicate_digest_envelope = Envelope(
+        duplicate_digest, PAYLOAD_TYPE, [signer.sign(pae(PAYLOAD_TYPE, duplicate_digest))]
+    ).to_jsonable()
+
     print(
         json.dumps(
             {
                 "envelope": seal.envelope.to_jsonable(),
+                "duplicate_identity_envelope": duplicate_identity_envelope,
+                "duplicate_digest_envelope": duplicate_digest_envelope,
                 "artifact_b64": base64.standard_b64encode(artifact).decode("ascii"),
                 "pubkey_raw_b64": _raw_pub_b64(signer),
                 "wrong_pubkey_raw_b64": _raw_pub_b64(other),

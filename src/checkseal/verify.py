@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from .digest import sha256_file, sha256_hex
 from .dsse import PAYLOAD_TYPE, Envelope, pae
 from .hbresolve import ReportLoader, resolve_enforced_proof
+from .json_utils import loads_unique_json
 from .model import (
     Authority,
     CheckEntry,
@@ -128,13 +129,13 @@ def load_envelope(seal_path: str) -> Envelope:
     """Load a T0/T1 .intoto.jsonl seal into a DSSE envelope."""
     with open(seal_path, encoding="utf-8") as fh:
         first = fh.readline().strip()
-    return Envelope.from_jsonable(json.loads(first))
+    return Envelope.from_jsonable(loads_unique_json(first))
 
 
 def _predicate_from_envelope(env: Envelope) -> Predicate:
     if env.payload_type != PAYLOAD_TYPE:
         raise VCRError(f"unexpected DSSE payloadType {env.payload_type!r}")
-    statement = json.loads(env.payload.decode("utf-8"))
+    statement = loads_unique_json(env.payload.decode("utf-8"))
     return parse_statement(statement)  # step 6: untrusted, validated
 
 
@@ -323,7 +324,7 @@ def verify_keyless_seal(
     payload, identity = verify_bundle_keyless(
         bundle_json, expected_identity=expected_identity, expected_issuer=expected_issuer
     )
-    statement = json.loads(payload.decode("utf-8"))
+    statement = loads_unique_json(payload.decode("utf-8"))
     predicate = parse_statement(statement)
 
     subject_ok, subject_reason = _check_subject(
