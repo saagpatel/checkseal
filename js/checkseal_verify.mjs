@@ -87,6 +87,12 @@ function rejectDuplicateObjectKeys(text) {
   }
 }
 
+export function parseUniqueJson(text) {
+  const value = JSON.parse(text);
+  rejectDuplicateObjectKeys(text);
+  return value;
+}
+
 function validateStatement(statement) {
   if (!object(statement) || statement._type !== STATEMENT_TYPE) throw new Error("unsupported Statement type");
   if (statement.predicateType !== PREDICATE_TYPE) throw new Error("unsupported predicate type");
@@ -110,6 +116,8 @@ function validateStatement(statement) {
   }
 }
 
+// Call parseUniqueJson on the raw DSSE line before passing its parsed object.
+// This function cannot detect duplicate keys in an object that is already parsed.
 // publicKeyRaw: 32-byte Uint8Array Ed25519 public key (T1: supplied out of band;
 // T2: extracted from the bundle's Fulcio cert by the caller). Returns the report.
 export async function verifySeal({ envelope, artifactBytes, publicKeyRaw }) {
@@ -129,8 +137,7 @@ export async function verifySeal({ envelope, artifactBytes, publicKeyRaw }) {
   try {
     payload = b64ToBytes(envelope.payload);
     const payloadText = new TextDecoder("utf-8", { fatal: true }).decode(payload);
-    statement = JSON.parse(payloadText);
-    rejectDuplicateObjectKeys(payloadText);
+    statement = parseUniqueJson(payloadText);
     validateStatement(statement);
     predicate = statement.predicate;
     if (!predicate || !predicate.subject || !predicate.subject.digest) {

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
 
-import { renderReport, verifySeal } from "./checkseal_verify.mjs";
+import { parseUniqueJson, renderReport, verifySeal } from "./checkseal_verify.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -20,6 +20,15 @@ function fixture() {
 }
 
 const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+test("unique JSON parser rejects duplicate envelope members", () => {
+  const valid = parseUniqueJson('{"payloadType":"type","payload":"first"}');
+  assert.equal(valid.payload, "first");
+  assert.throws(
+    () => parseUniqueJson('{"payloadType":"type","payload":"first","payload":"second"}'),
+    /duplicate JSON object member/,
+  );
+});
 
 test("valid Python-signed seal verifies in JS", async () => {
   const f = fixture();
