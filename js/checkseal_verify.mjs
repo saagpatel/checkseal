@@ -116,6 +116,8 @@ function validateStatement(statement) {
   }
 }
 
+// Call parseUniqueJson on the raw DSSE line before passing its parsed object.
+// This function cannot detect duplicate keys in an object that is already parsed.
 // publicKeyRaw: 32-byte Uint8Array Ed25519 public key (T1: supplied out of band;
 // T2: extracted from the bundle's Fulcio cert by the caller). Returns the report.
 export async function verifySeal({ envelope, artifactBytes, publicKeyRaw }) {
