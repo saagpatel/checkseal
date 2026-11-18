@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
+from hypothesis import HealthCheck, settings
 
 from checkseal.digest import sha256_hex
 from checkseal.model import (
@@ -22,6 +24,13 @@ from checkseal.model import (
     Subject,
     SubjectKind,
 )
+
+# Property-test profiles. "ci" is the default; run the hard pass once locally with
+# HYPOTHESIS_PROFILE=hard (at least 20000 examples per property).
+_SUPPRESS = [HealthCheck.too_slow, HealthCheck.data_too_large]
+settings.register_profile("ci", max_examples=300, deadline=None, suppress_health_check=_SUPPRESS)
+settings.register_profile("hard", max_examples=20000, deadline=None, suppress_health_check=_SUPPRESS)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "ci"))
 
 VALID_SHA = sha256_hex(b"config")
 RAN_AT = "2026-08-16T00:00:00Z"

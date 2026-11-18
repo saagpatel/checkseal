@@ -24,7 +24,7 @@ dependencies = []
 sign = ["cryptography>=42"]              # T1 local-key signing/verification
 keyless = ["sigstore>=4.5.1,<5"]        # T2 Sigstore keyless; 4.5.1 removes vulnerable pyasn1
 vl = ["verification-ledger>=0.1"]       # VL-backed SealStore (retention + provenance typing)
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.13", "hatchling>=1.26", "cryptography>=42", "verification-ledger>=0.1"]
+dev = ["pytest>=8", "hypothesis>=6.100", "ruff>=0.6", "mypy>=1.13", "hatchling>=1.26", "cryptography>=42", "verification-ledger>=0.1"]
 
 [project.scripts]
 checkseal = "checkseal.__main__:main"
