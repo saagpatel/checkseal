@@ -584,3 +584,19 @@ def test_many_signature_entries_have_equal_verdicts(js: JsWorker) -> None:
     js_ok, reply = js_accepts(js, line, MINIMAL.artifact)
     out = verify_line(line, artifact=MINIMAL.artifact)
     assert js_ok and py_subset_accepts(out), (str(reply)[:300], out.describe()[:300])
+
+
+@given(st.text(alphabet="az09-/Z\n ", max_size=12))
+@example("a")
+@example("a/b-c")
+@example("a-b")
+@example("a//b")
+@example("a/")
+@example("a\n")
+def test_check_id_rule_agrees_without_a_regex(js: JsWorker, check_id: str) -> None:
+    """The JS check.id loop that replaced the backtracking regex accepts exactly
+    what Python's re.fullmatch accepts (signed, so only parsing decides)."""
+    line = _signed_variant(_set_path(("predicate", "checks", 0, "check", "id"), check_id))
+    js_ok, reply = js_accepts(js, line, MINIMAL.artifact)
+    out = verify_line(line, artifact=MINIMAL.artifact)
+    assert js_ok is py_subset_accepts(out), (check_id, str(reply)[:200])
