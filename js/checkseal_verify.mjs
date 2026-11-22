@@ -48,9 +48,48 @@ const NOT_CHECKED = [
 
 const subtle = (globalThis.crypto || {}).subtle;
 
-const CANONICAL_B64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
-const SHA256_HEX = /^[0-9a-f]{64}$/;
-const CHECK_ID = /^[a-z0-9]+(\/[a-z0-9-]+)*$/;
+// No regex with a repeated group runs over untrusted input: V8's backtracking
+// stack overflows on long strings (about 20 MB of base64, or a check.id with a
+// few million segments), where Python's re engine does not. Linear loops instead.
+const SHA256_HEX = /^[0-9a-f]{64}$/; // fixed width, no repetition of a group
+
+function isB64Char(c) {
+  return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c === 43 || c === 47;
+}
+
+function isCanonicalB64Shape(s) {
+  if (s.length % 4 !== 0) return false;
+  let pad = 0;
+  while (pad < s.length && s[s.length - 1 - pad] === "=") pad += 1;
+  if (pad > 2) return false;
+  for (let i = 0; i < s.length - pad; i++) if (!isB64Char(s.charCodeAt(i))) return false;
+  return true;
+}
+
+function isLowerAlnum(c) { return (c >= "a" && c <= "z") || (c >= "0" && c <= "9"); }
+
+// ^[a-z0-9]+(/[a-z0-9-]+)*$ without a regex.
+function isCheckId(s) {
+  let start = 0;
+  let first = true;
+  for (let i = 0; i <= s.length; i++) {
+    if (i === s.length || s[i] === "/") {
+      if (i === start) return false;
+      start = i + 1;
+      first = false;
+    } else if (!(isLowerAlnum(s[i]) || (!first && s[i] === "-"))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Code points, as Python's len() counts them, without materializing an array.
+function codePointLength(s) {
+  let n = 0;
+  for (const _ of s) n += 1;
+  return n;
+}
 
 function ensure(cond, message) {
   if (!cond) throw new Error(message);
@@ -66,7 +105,7 @@ function own(value, key) {
 // Canonical padded standard base64 only (same rule as checkseal.dsse.b64decode_canonical):
 // no whitespace, no URL-safe alphabet, mandatory padding, zero trailing bits.
 function b64ToBytes(b64) {
-  ensure(typeof b64 === "string" && CANONICAL_B64.test(b64), "not canonical padded base64");
+  ensure(typeof b64 === "string" && isCanonicalB64Shape(b64), "not canonical padded base64");
   const bin = atob(b64);
   ensure(btoa(bin) === b64, "non-canonical base64 (non-zero trailing bits)");
   const out = new Uint8Array(bin.length);
@@ -85,7 +124,7 @@ function pae(payloadType, payload) {
 
 async function sha256Hex(bytes) {
   const digest = await subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function trustFloor(entry) {
@@ -137,8 +176,13 @@ function rejectNonFinite(value) {
   while (pending.length) {
     const v = pending.pop();
     if (typeof v === "number" && !Number.isFinite(v)) throw new Error("JSON number is not a finite double");
-    if (Array.isArray(v)) pending.push(...v);
-    else if (object(v)) pending.push(...Object.values(v));
+    // One push per element: spreading a wide collection into push() overflows
+    // the engine's argument limit (about 120k on V8).
+    if (Array.isArray(v)) {
+      for (let i = 0; i < v.length; i++) pending.push(v[i]);
+    } else if (object(v)) {
+      for (const key in v) if (Object.hasOwn(v, key)) pending.push(v[key]);
+    }
   }
 }
 
@@ -155,7 +199,7 @@ export function parseUniqueJson(text) {
 
 function str(value, ctx, maxLen) {
   ensure(typeof value === "string", `${ctx}: must be a string`);
-  if (maxLen !== undefined) ensure([...value].length <= maxLen, `${ctx}: exceeds ${maxLen} chars`);
+  if (maxLen !== undefined) ensure(codePointLength(value) <= maxLen, `${ctx}: exceeds ${maxLen} chars`);
   return value;
 }
 
@@ -196,7 +240,7 @@ function validateEntry(d, index) {
   members(d, ctx, ["check", "verdict", "evidence", "runtime", "provenance"]);
 
   const check = members(d.check, `${ctx}.check`, ["id", "kind", "version"], ["config_ref"]);
-  ensure(CHECK_ID.test(str(check.id, `${ctx}.check.id`)), `${ctx}.check.id: bad pattern`);
+  ensure(isCheckId(str(check.id, `${ctx}.check.id`)), `${ctx}.check.id: bad pattern`);
   oneOf(check.kind, CHECK_KINDS, `${ctx}.check.kind`);
   str(check.version, `${ctx}.check.version`);
   if (Object.hasOwn(check, "config_ref")) digestSet(check.config_ref, `${ctx}.check.config_ref`);
