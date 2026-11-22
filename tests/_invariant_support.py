@@ -322,3 +322,164 @@ class JsWorker:
 
 def node_binary() -> str | None:
     return shutil.which("node")
+
+
+# --------------------------------------------------------------------------
+# Statement fuzzing and the schema oracle (INV-S4, INV-J8, INV-J10)
+# --------------------------------------------------------------------------
+
+SCHEMA_PATH = REPO / "schemas" / "vcr-predicate-0.2.schema.json"
+
+
+def _predicate_validator() -> Any:
+    """Draft 2020-12 validator for the vendored predicate schema.
+
+    JSON Schema patterns are ECMA-262 regexes, where ``$`` matches only at the
+    end of input. The jsonschema library evaluates them with Python's re.search,
+    whose ``$`` also matches before a trailing newline, so the oracle swaps in
+    ``\\Z`` to keep ECMA semantics (``"a\\n"`` is not a valid check.id).
+    """
+    import re
+
+    from jsonschema import Draft202012Validator, validators
+    from jsonschema.exceptions import ValidationError
+
+    def ecma_pattern(validator: Any, pattern: str, instance: Any, _schema: Any) -> Any:
+        if validator.is_type(instance, "string") and not re.search(pattern.replace("$", r"\Z"), instance):
+            yield ValidationError(f"{instance!r} does not match {pattern!r}")
+
+    cls = validators.extend(Draft202012Validator, {"pattern": ecma_pattern})
+    return cls(json.loads(SCHEMA_PATH.read_text()))
+
+
+PREDICATE_VALIDATOR = _predicate_validator()
+
+
+def statement_oracle(statement: Any) -> bool:
+    """Independent acceptance rule for a decoded Statement: the in-toto Statement
+    v1 layer as statement.py documents it, plus the vendored predicate schema."""
+    from checkseal.model import PREDICATE_TYPE, STATEMENT_TYPE
+
+    if not isinstance(statement, dict):
+        return False
+    if statement.get("_type") != STATEMENT_TYPE or statement.get("predicateType") != PREDICATE_TYPE:
+        return False
+    predicate = statement.get("predicate")
+    if not PREDICATE_VALIDATOR.is_valid(predicate):
+        return False
+    subjects = statement.get("subject")
+    if not isinstance(subjects, list) or len(subjects) != 1 or not isinstance(subjects[0], dict):
+        return False
+    s0 = subjects[0]
+    if not isinstance(s0.get("digest"), dict):
+        return False
+    psub = predicate["subject"]
+    return bool(s0.get("name") == psub["name"] and s0["digest"].get("sha256") == psub["digest"]["sha256"])
+
+
+_HEX = "0123456789abcdef"
+_leaf_values = st.one_of(
+    st.none(),
+    st.booleans(),
+    st.sampled_from([0, 1, -1, 2**53, 1.0, 1.5, -0.0, 1e300]),
+    st.integers(-5, 5),
+    st.sampled_from(
+        [
+            "",
+            "0.2",
+            "a",
+            "a\n",
+            "Bad Id",
+            "pass",
+            "fail",
+            "advisory",
+            "enforced",
+            "observed",
+            "constructor",
+            "__proto__",
+            "A",
+            "B",
+            "C",
+            "review",
+            "guard",
+            "ci",
+            "operator",
+            "log-digest",
+            "0" * 64,
+            "A" * 64,
+            "0" * 63,
+            "0" * 64 + "\n",
+            "n" * 257,
+        ]
+    ),
+    st.text(max_size=6),
+)
+_json_values: st.SearchStrategy[Any] = st.recursive(
+    _leaf_values,
+    lambda inner: st.lists(inner, max_size=2) | st.dictionaries(st.text(max_size=4), inner, max_size=2),
+    max_leaves=4,
+)
+_member_names = st.sampled_from(
+    [
+        "sha256",
+        "sha512",
+        "kind",
+        "name",
+        "digest",
+        "mediaType",
+        "id",
+        "version",
+        "config_ref",
+        "result",
+        "enforced",
+        "enforced_proof",
+        "uri",
+        "grade",
+        "inline",
+        "ran_at",
+        "runner",
+        "duration_ms",
+        "env_digest",
+        "authority",
+        "instruction_boundary",
+        "vcr_version",
+        "extra",
+        "__proto__",
+    ]
+)
+
+
+def _paths(value: Any, prefix: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
+    out = [prefix]
+    if isinstance(value, dict):
+        for k, v in value.items():
+            out += _paths(v, prefix + (k,))
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            out += _paths(v, prefix + (i,))
+    return out
+
+
+@st.composite
+def mutated_statements(draw: st.DrawFn, base: dict[str, Any]) -> dict[str, Any]:
+    """A Statement with 0-3 structural mutations at any depth: a member deleted,
+    an extra member added, or a value replaced with an arbitrary JSON value."""
+    import copy
+
+    statement = copy.deepcopy(base)
+    for _ in range(draw(st.integers(0, 3))):
+        path = draw(st.sampled_from(_paths(statement)))
+        parent: Any = statement
+        for p in path[:-1]:
+            parent = parent[p]
+        target = parent[path[-1]] if path else statement
+        how = draw(st.sampled_from(["delete", "add", "replace"]))
+        if how == "add" and isinstance(target, dict):
+            target[draw(_member_names)] = draw(_json_values)
+        elif how == "delete" and path and isinstance(parent, dict):
+            del parent[path[-1]]
+        elif how == "delete" and path and isinstance(parent, list):
+            parent.pop(path[-1])
+        elif path:
+            parent[path[-1]] = draw(_json_values)
+    return statement
