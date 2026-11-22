@@ -425,7 +425,36 @@ def _json_edge_texts(draw: st.DrawFn) -> str:
     return draw(st.sampled_from(["", " ", "﻿", "\n"])) + text
 
 
-@given(_json_edge_texts())
+_WIDE_SIZES = [0, 1, 65535, 65536, 150_000]
+_WIDE_KINDS = ["zeros", "keys", "zeros then 1e400", "keys then duplicate", "empty arrays", "long string"]
+
+
+def _wide_text(kind: str, n: int) -> str:
+    if kind == "zeros":
+        return "[" + ",".join(["0"] * n) + "]"
+    if kind == "keys":
+        return "{" + ",".join(f'"k{i}":0' for i in range(n)) + "}"
+    if kind == "zeros then 1e400":
+        return "[" + "0," * n + "1e400]"
+    if kind == "keys then duplicate":
+        return "{" + "".join(f'"k{i}":0,' for i in range(n)) + '"k0":1}' if n else '{"a":0,"a":1}'
+    if kind == "empty arrays":
+        return "[" + ",".join(["[]"] * n) + "]"
+    return '"' + "x" * (n * 20) + '"'
+
+
+@st.composite
+def _wide_json_texts(draw: st.DrawFn) -> str:
+    """Wide collections (no argument-spread limit may leak into acceptance),
+    optionally wrapped a few levels deep."""
+    text = _wide_text(draw(st.sampled_from(_WIDE_KINDS)), draw(st.sampled_from(_WIDE_SIZES)))
+    depth = draw(st.sampled_from([0, 3, 63]))
+    return "[" * depth + text + "]" * depth
+
+
+@given(st.one_of(_json_edge_texts(), _wide_json_texts()))
+@example(_wide_text("zeros", 150_000))
+@example(_wide_text("keys", 150_000))
 @example("[" * 64 + "]" * 64)
 @example("[" * 65 + "]" * 65)
 @example("1e400")
@@ -436,3 +465,122 @@ def test_python_and_js_strict_json_accept_the_same_texts(js: JsWorker, text: str
     except (ValueError, RecursionError):
         py_ok = False
     assert js.call(op="unique", text=text)["ok"] is py_ok, text[:200]
+
+
+# INV-J12: size-bounded parity (wide, deep and long inputs) --------------------
+# Codex review of #21: spreading a 150k-element collection into push() threw in
+# JS while Python accepted. Every size- or depth-dependent path gets a bounded
+# case here, verified by both clients with equal verdicts.
+
+
+def _signed_variant(mutate: Any) -> bytes:
+    statement = copy.deepcopy(_STATEMENT_BASE)
+    mutate(statement)
+    payload = json.dumps(statement, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return envelope_line(resign(payload))
+
+
+def _set_path(path: tuple[Any, ...], value: Any) -> Any:
+    def f(s: dict[str, Any]) -> None:
+        cur: Any = s
+        for p in path[:-1]:
+            cur = cur[p]
+        cur[path[-1]] = value
+
+    return f
+
+
+def _nested(depth: int) -> Any:
+    value: Any = 0
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+# Statement > predicate > subject > extra is depth 3, so extra may nest 61 more.
+_SIZE_CASES: list[tuple[str, Any, bool]] = [
+    ("wide array extension (150k)", _set_path(("predicate", "subject", "extra"), [0] * 150_000), True),
+    (
+        "wide object extension (150k keys)",
+        _set_path(("predicate", "subject", "extra"), {f"k{i}": 0 for i in range(150_000)}),
+        True,
+    ),
+    (
+        "wide array ending in 1e400",
+        _set_path(("predicate", "subject", "extra"), [0] * 150_000 + [float("inf")]),
+        False,
+    ),
+    ("extension at the depth limit (64)", _set_path(("predicate", "subject", "extra"), _nested(61)), True),
+    ("extension past the depth limit (65)", _set_path(("predicate", "subject", "extra"), _nested(62)), False),
+    (
+        "16 MB string extension (base64 > 21M chars)",
+        _set_path(("predicate", "subject", "extra"), "x" * 16_000_000),
+        True,
+    ),
+    (
+        "check.id with 5M segments",
+        _set_path(("predicate", "checks", 0, "check", "id"), "a" + "/b" * 5_000_000),
+        True,
+    ),
+    ("name of 256 astral chars", None, True),
+    ("name of 257 astral chars", None, False),
+    ("5000 check entries", None, True),
+]
+
+
+def _name_case(n: int) -> bytes:
+    name = "\U0001f600" * n
+
+    def f(s: dict[str, Any]) -> None:
+        s["predicate"]["subject"]["name"] = name
+        s["subject"][0]["name"] = name
+
+    return _signed_variant(f)
+
+
+def _many_checks() -> bytes:
+    def f(s: dict[str, Any]) -> None:
+        s["predicate"]["checks"] = [copy.deepcopy(s["predicate"]["checks"][0]) for _ in range(5000)]
+
+    return _signed_variant(f)
+
+
+def _size_case_line(label: str, mutate: Any) -> bytes:
+    if label.startswith("name of 256"):
+        return _name_case(256)
+    if label.startswith("name of 257"):
+        return _name_case(257)
+    if label == "5000 check entries":
+        return _many_checks()
+    if label == "wide array ending in 1e400":
+        statement = copy.deepcopy(_STATEMENT_BASE)
+        statement["predicate"]["subject"]["extra"] = "@@WIDE@@"
+        text = json.dumps(statement, separators=(",", ":"))
+        text = text.replace('"@@WIDE@@"', "[" + "0," * 150_000 + "1e400]")
+        return envelope_line(resign(text.encode()))
+    return _signed_variant(mutate)
+
+
+@pytest.mark.parametrize(("label", "mutate", "expected"), _SIZE_CASES, ids=[c[0] for c in _SIZE_CASES])
+def test_size_dependent_paths_have_equal_verdicts(
+    js: JsWorker, label: str, mutate: Any, expected: bool
+) -> None:
+    line = _size_case_line(label, mutate)
+    js_ok, reply = js_accepts(js, line, MINIMAL.artifact)
+    assert "threw" not in reply, reply
+    out = verify_line(line, artifact=MINIMAL.artifact)
+    py_ok = py_subset_accepts(out)
+    assert js_ok is py_ok, (label, str(reply)[:300], out.describe()[:300])
+    assert py_ok is expected, (label, out.describe()[:300])
+
+
+def test_many_signature_entries_have_equal_verdicts(js: JsWorker) -> None:
+    """2000 signature entries, only the last valid: both scan to it and PASS."""
+    d = MINIMAL.envelope_dict
+    good = d["signatures"][0]
+    bad = {"sig": b64(bytes(64)), "keyid": good["keyid"]}
+    d["signatures"] = [dict(bad) for _ in range(1999)] + [good]
+    line = envelope_line(d)
+    js_ok, reply = js_accepts(js, line, MINIMAL.artifact)
+    out = verify_line(line, artifact=MINIMAL.artifact)
+    assert js_ok and py_subset_accepts(out), (str(reply)[:300], out.describe()[:300])
