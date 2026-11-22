@@ -116,19 +116,20 @@ test("a structurally broken payload fails gracefully, no throw", async () => {
 test("shared valid and invalid schema fixtures are loaded consistently", async () => {
   for (const [name, invalid] of [["valid-statement.json", false], ["invalid-statement.json", true]]) {
     const statement = readFileSync(join(repoRoot, "tests/fixtures/schema", name), "utf8");
-    const envelope = { payloadType: "application/vnd.in-toto+json", payload: Buffer.from(statement).toString("base64"), signatures: [] };
+    const envelope = { payloadType: "application/vnd.in-toto+json", payload: Buffer.from(statement).toString("base64"), signatures: [{ sig: "AA==" }] };
     const report = await verifySeal({ envelope, artifactBytes: new Uint8Array() });
     assert.equal(Boolean(report.malformed), invalid, name);
   }
 });
 
-test("injection-shaped strings stay inert report text", async () => {
+test("injection-shaped check ids are refused before they can be rendered", async () => {
   const statement = JSON.parse(readFileSync(join(repoRoot, "tests/fixtures/schema/valid-statement.json"), "utf8"));
   statement.predicate.checks[0].check.id = '<img src=x onerror="alert(1)">';
-  const envelope = { payloadType: "application/vnd.in-toto+json", payload: Buffer.from(JSON.stringify(statement)).toString("base64"), signatures: [] };
+  const envelope = { payloadType: "application/vnd.in-toto+json", payload: Buffer.from(JSON.stringify(statement)).toString("base64"), signatures: [{ sig: "AA==" }] };
   const report = await verifySeal({ envelope, artifactBytes: new Uint8Array() });
-  assert.equal(report.entries[0].checkId, '<img src=x onerror="alert(1)">');
-  assert.match(renderReport(report), /<img src=x onerror=/);
+  assert.equal(report.malformed, true);
+  assert.deepEqual(report.entries, []);
+  assert.doesNotMatch(renderReport(report), /<img/);
 });
 
 test("malformed entries and tampered payloads produce failed reports", async () => {
