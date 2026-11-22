@@ -239,17 +239,8 @@ def test_js_subset_pass_implies_python_subset_pass(js: JsWorker, case: SealCase,
 # INV-J7: completeness: Python authentic implies JS subset PASS -----------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "BROKEN INV-J7: the Python CLI authenticates envelopes the browser subset refuses. Minimal "
-        "counterexample: a valid T1 seal with one '!' inserted into the payload base64 (Python's "
-        "non-strict b64decode discards it; atob throws InvalidCharacterError). Also: an extra '=' "
-        "after the sig padding, and a re-signed Statement whose predicate digest is UPPERCASE hex "
-        "(Python lowercases it; JS compares raw strings). No case authenticates different bytes."
-    ),
-)
+# Was BROKEN (xfail strict) until canonical base64 and strict digests in the Python parser.
+# The pinned counterexample (one '!' inserted into the payload base64) is now refused by both.
 @given(seal_cases(max_checks=1), st.sampled_from(_VARIANTS), st.text(min_size=1, max_size=4))
 @example(case=MINIMAL, how="junk char in payload base64", junk="")
 def test_python_authentic_implies_js_subset_pass(js: JsWorker, case: SealCase, how: str, junk: str) -> None:
