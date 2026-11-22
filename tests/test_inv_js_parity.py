@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-from hypothesis import example, given
+from hypothesis import event, example, given
 from hypothesis import strategies as st
 
 from _invariant_support import (
@@ -26,6 +26,7 @@ from _invariant_support import (
     SealCase,
     b64,
     envelope_line,
+    mutated_statements,
     node_binary,
     raw_public_b64,
     resign,
@@ -35,8 +36,10 @@ from _invariant_support import (
     with_sig,
 )
 from checkseal.digest import canonical_bytes
-from checkseal.dsse import pae
+from checkseal.dsse import b64decode_canonical, pae
 from checkseal.json_utils import loads_unique_json
+from checkseal.model import VCRError
+from checkseal.statement import build_statement
 from checkseal.trust import trust_floor
 
 PUB = raw_public_b64(SIGNER)
@@ -113,22 +116,27 @@ def test_js_and_python_pae_are_byte_identical(js: JsWorker, payload_type: str, b
     assert base64.b64decode(reply["pae"]) == pae(payload_type, body)
 
 
-# INV-J4: whenever both base64 decoders accept, they decode the same bytes -----
+# INV-J4: both base64 decoders accept exactly the same strings, same bytes ------
 
 _b64_text = st.text(alphabet="ABCDQRwxyz0189+/= \t\n!-_", max_size=16)
 
 
 @given(st.one_of(_b64_text, st.binary(max_size=12).map(b64)))
 @example("YQ==")
-@example("YR==")
-def test_when_both_base64_decoders_accept_they_agree(js: JsWorker, text: str) -> None:
+@example("YR==")  # non-zero trailing bits: once accepted by both, now refused by both
+@example("YQ")  # unpadded: once accepted by atob only
+@example("Y!Q==")  # junk char: once accepted by Python only
+@example("YQ===")  # excess padding: once accepted by Python only
+def test_base64_decoders_accept_the_same_strings_and_bytes(js: JsWorker, text: str) -> None:
     reply = js.call(op="b64", text=text)
     try:
-        py = base64.standard_b64decode(text)
-    except ValueError:
-        return
-    if "bytes" in reply:
-        assert base64.b64decode(reply["bytes"]) == py, (text, reply)
+        py: bytes | None = b64decode_canonical(text, "t")
+    except VCRError:
+        py = None
+    js_bytes = base64.b64decode(reply["bytes"]) if "bytes" in reply else None
+    assert js_bytes == py, (text, reply)
+    if py is not None:
+        assert b64(py) == text  # exactly one accepted spelling per byte string
 
 
 # INV-J5: duplicate-member detection parity -----------------------------------
@@ -213,19 +221,9 @@ MINIMAL = _minimal_case()
 
 
 # INV-J6: honest-subset soundness: JS PASS implies Python's subset steps pass ---
+# Was BROKEN (xfail strict): JS ignored the keyid hint. Pinned counterexample kept.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "BROKEN INV-J6: the browser subset PASSES envelopes the Python CLI refuses. Minimal "
-        'counterexample: a valid T1 seal with signatures[0].keyid set to "x" (JS ignores keyid; '
-        "Python raises key id mismatch). Also: payload or sig base64 with its '=' padding stripped "
-        "(atob accepts, Python raises Incorrect padding), and a signed payload with a UTF-8 BOM "
-        "(TextDecoder drops it, Python json rejects it). Signed bytes are identical in every case."
-    ),
-)
 @given(seal_cases(max_checks=1), st.sampled_from(_VARIANTS), st.text(min_size=1, max_size=4))
 @example(case=MINIMAL, how="keyid changed", junk="x")
 def test_js_subset_pass_implies_python_subset_pass(js: JsWorker, case: SealCase, how: str, junk: str) -> None:
@@ -236,11 +234,27 @@ def test_js_subset_pass_implies_python_subset_pass(js: JsWorker, case: SealCase,
         assert py_subset_accepts(out), f"{how}: JS PASS, Python: {out.describe()}"
 
 
+def test_keyid_hint_is_checked_identically(js: JsWorker) -> None:
+    """The INV-J6 pin, stated directly: keyid "x" over a valid signature is
+    refused by both; an absent or null keyid is no hint, accepted by both."""
+    line = _variant(MINIMAL, "keyid changed", "x")
+    js_ok, reply = js_accepts(js, line, MINIMAL.artifact)
+    assert not js_ok and "key id mismatch" in reply["report"]["signatureReason"], reply
+    assert not verify_line(line, artifact=MINIMAL.artifact, case=MINIMAL).accepted
+    for how in ("null", "absent"):
+        d = MINIMAL.envelope_dict
+        if how == "null":
+            d["signatures"][0]["keyid"] = None
+        else:
+            del d["signatures"][0]["keyid"]
+        assert js_accepts(js, envelope_line(d), MINIMAL.artifact)[0], how
+        assert verify_line(envelope_line(d), artifact=MINIMAL.artifact, case=MINIMAL).accepted, how
+
+
 # INV-J7: completeness: Python authentic implies JS subset PASS -----------------
+# Was BROKEN (xfail strict): Python's lenient base64 accepted a '!' in the payload.
 
 
-# Was BROKEN (xfail strict) until canonical base64 and strict digests in the Python parser.
-# The pinned counterexample (one '!' inserted into the payload base64) is now refused by both.
 @given(seal_cases(max_checks=1), st.sampled_from(_VARIANTS), st.text(min_size=1, max_size=4))
 @example(case=MINIMAL, how="junk char in payload base64", junk="")
 def test_python_authentic_implies_js_subset_pass(js: JsWorker, case: SealCase, how: str, junk: str) -> None:
@@ -251,7 +265,53 @@ def test_python_authentic_implies_js_subset_pass(js: JsWorker, case: SealCase, h
         assert js_ok, f"{how}: Python PASS, JS: {reply}"
 
 
-# INV-J8: the JS verifier returns a failed report, never throws ---------------
+# INV-J10: on any honestly signed payload, the two subset verdicts are equal ----
+
+_EDGES = ["none", "none", "none", "bom", "nan", "big int", "big float", "deep", "dup"]
+
+
+@st.composite
+def _signed_payloads(draw: st.DrawFn) -> tuple[bytes, bytes]:
+    """(payload bytes, artifact): a real Statement mutated at any depth (members
+    deleted, added or retyped), serialized with or without JSON-level edge cases
+    (BOM, NaN, out-of-range numbers, deep nesting, a duplicate member)."""
+    case = draw(seal_cases(max_checks=2))
+    statement = draw(mutated_statements(build_statement(case.predicate)))
+    text = json.dumps(statement, ensure_ascii=draw(st.booleans()))
+    edge = draw(st.sampled_from(_EDGES))
+    if edge == "bom":
+        text = "﻿" + text
+    elif edge in ("nan", "big int", "big float", "deep"):
+        value = {"nan": "NaN", "big int": "1" + "0" * 320, "big float": "1e400"}.get(edge, "")
+        if edge == "deep":
+            depth = draw(st.integers(60, 70))
+            value = "[" * depth + "]" * depth
+        text = text[:-1] + ',"x":' + value + "}"
+    elif edge == "dup":
+        text = '{"_type":0,' + text[1:]
+    return text.encode("utf-8"), case.artifact
+
+
+_EXTRA_PREDICATE_MEMBER = MINIMAL.envelope.payload.replace(
+    b'"vcr_version":"0.2"', b'"vcr_version":"0.2","x":1'
+)
+
+
+@given(_signed_payloads())
+@example((_EXTRA_PREDICATE_MEMBER, b""))
+@example((b"\xef\xbb\xbf" + MINIMAL.envelope.payload, b""))  # BOM: once a JS-only PASS
+def test_signed_payload_subset_verdicts_are_equal(js: JsWorker, sample: tuple[bytes, bytes]) -> None:
+    payload, artifact = sample
+    line = envelope_line(resign(payload))
+    js_ok, reply = js_accepts(js, line, artifact)
+    assert "threw" not in reply, reply
+    out = verify_line(line, artifact=artifact)
+    event(f"subset verdict: {'PASS' if js_ok else 'refused'}")
+    assert js_ok is py_subset_accepts(out), (payload[:300], reply, out.describe()[:300])
+
+
+# INV-J8: the JS verifier returns a report, never throws ----------------------
+# Was BROKEN (xfail strict): a predicate digest key "sha257" made verifySeal throw.
 
 
 def _statement_with(mutate: Any) -> dict[str, Any]:
@@ -267,52 +327,112 @@ def _set_digest(value: Any) -> Any:
     return f
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "BROKEN INV-J8 (js/checkseal_verify.mjs:132-133 claims a tampered payload never throws): "
-        "flip one byte of a genuine seal's payload so the predicate.subject.digest key reads "
-        '"sha257" (no signature needed) and verifySeal throws TypeError: sha256.slice of '
-        "undefined at js/checkseal_verify.mjs:174, whenever artifact bytes are supplied. "
-        "Any missing or non-string predicate digest value does the same."
-    ),
-)
+_STATEMENT_BASE: dict[str, Any] = loads_unique_json(MINIMAL.envelope.payload)
+_SHA257 = _statement_with(_set_digest({"sha257": MINIMAL.predicate.subject.digest}))
+
+
 @given(
-    st.one_of(
-        st.dictionaries(
-            st.sampled_from(["sha256", "sha257", "sha512"]),
-            st.one_of(st.integers(), st.booleans(), st.none(), st.just("0" * 64)),
-        ),
-        st.builds(dict),
-    )
+    st.one_of(mutated_statements(_STATEMENT_BASE), st.builds(dict), st.lists(st.none(), max_size=2)),
+    st.booleans(),
+    st.booleans(),
 )
-@example({"sha257": MINIMAL.predicate.subject.digest})  # one flipped byte ("6" -> "7") of a real seal
-def test_js_verifier_never_throws_on_untrusted_payload(js: JsWorker, digest: Any) -> None:
-    payload = json.dumps(_statement_with(_set_digest(digest))).encode()
-    envelope = {"payload": b64(payload), "payloadType": MINIMAL.envelope.payload_type, "signatures": []}
-    reply = js.verify(json.dumps(envelope), b"x", PUB)
+@example(_SHA257, True, True)  # one flipped byte ("6" -> "7") of a real seal's payload
+@example(_SHA257, False, True)
+def test_js_verifier_always_returns_a_report(
+    js: JsWorker, statement: Any, signed: bool, artifact: bool
+) -> None:
+    payload = json.dumps(statement).encode()
+    pt = MINIMAL.envelope.payload_type
+    sig = {"sig": b64(SIGNER.sign(pae(pt, payload)).sig)} if signed else {"sig": "AA=="}
+    envelope = {"payload": b64(payload), "payloadType": pt, "signatures": [sig]}
+    reply = js.verify(json.dumps(envelope), b"x" if artifact else b"", PUB)
     assert "threw" not in reply, reply
+    report = reply["report"]
+    assert isinstance(report["authenticSubset"], bool)
+    if report.get("malformed"):
+        assert report["authenticSubset"] is False and report["entries"] == []
 
 
-# INV-J9: the JS trust floor stays in {0, 1, 2} for any string ----------------
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "BROKEN INV-J9: js trustFloor looks values up in plain object literals, so "
-        'verdict.enforced = "constructor" (or "__proto__", "toString", ...) yields floor NaN '
-        "and label undefined instead of the conservative 0. Python rejects the value at parse."
+_any_json = st.recursive(
+    st.none() | st.booleans() | st.integers() | st.text(max_size=6) | st.sampled_from(["AA==", "", "!"]),
+    lambda inner: (
+        st.lists(inner, max_size=3)
+        | st.dictionaries(
+            st.sampled_from(["payload", "payloadType", "signatures", "sig", "keyid", "x"]), inner
+        )
     ),
+    max_leaves=8,
 )
+
+
+@given(_any_json)
+def test_js_verifier_returns_a_report_for_any_envelope_shape(js: JsWorker, envelope: Any) -> None:
+    reply = js.verify(json.dumps(envelope), b"x", PUB)
+    assert "threw" not in reply and "parseError" not in reply, reply
+    assert reply["report"]["authenticSubset"] is False
+
+
+# INV-J9: the JS trust floor stays in {0, 1, 2} with a defined label ----------
+# Was BROKEN (xfail strict): "constructor" resolved to Object.prototype members.
+
+_PROTO_NAMES = ["constructor", "__proto__", "toString", "valueOf", "hasOwnProperty"]
+
+
 @given(
-    st.one_of(st.text(max_size=12), st.sampled_from(["constructor", "__proto__", "toString"])),
-    st.one_of(st.text(max_size=12), st.sampled_from(["valueOf", "A"])),
+    st.one_of(st.text(max_size=12), st.sampled_from(_PROTO_NAMES + ["enforced", "advisory"])),
+    st.one_of(st.text(max_size=12), st.sampled_from(_PROTO_NAMES + ["A", "B"])),
 )
 @example("constructor", "A")
+@example("__proto__", "toString")
 def test_js_trust_floor_is_always_0_1_or_2(js: JsWorker, enforced: str, grade: str) -> None:
     reply = js.call(op="floor", entry={"verdict": {"enforced": enforced}, "evidence": {"grade": grade}})
-    assert reply["floor"] in {"0", "1", "2"}, (enforced, grade, reply)
+    bind = {"enforced": 2, "advisory": 1, "observed": 0}.get(enforced, 0)
+    grade_rank = {"A": 2, "B": 1, "C": 0}.get(grade, 0)
+    assert reply["floor"] == str(min(bind, grade_rank)), (enforced, grade, reply)
     assert reply["label"] is not None
+
+
+# INV-J11: strict JSON acceptance parity --------------------------------------
+
+_MAX_DOUBLE_INT = str(int(1.7976931348623157e308))
+_JSON_INNER = [
+    "1",
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "1e308",
+    "1e309",
+    "-1e400",
+    "1" + "0" * 308,
+    "1" + "0" * 309,
+    _MAX_DOUBLE_INT,
+    str(int(_MAX_DOUBLE_INT) + 2**970),  # rounds up to 2**1024: Infinity in JS
+    "1.7976931348623157e308",
+    "1.7976931348623159e308",
+    '"s"',
+    '{"a":1,"a":2}',
+    "[]",
+    "{}",
+    "-0",
+    "0.0",
+]
+
+
+@st.composite
+def _json_edge_texts(draw: st.DrawFn) -> str:
+    depth = draw(st.integers(0, 70))
+    text = "[" * depth + draw(st.sampled_from(_JSON_INNER)) + "]" * depth
+    return draw(st.sampled_from(["", " ", "﻿", "\n"])) + text
+
+
+@given(_json_edge_texts())
+@example("[" * 64 + "]" * 64)
+@example("[" * 65 + "]" * 65)
+@example("1e400")
+def test_python_and_js_strict_json_accept_the_same_texts(js: JsWorker, text: str) -> None:
+    try:
+        loads_unique_json(text)
+        py_ok = True
+    except (ValueError, RecursionError):
+        py_ok = False
+    assert js.call(op="unique", text=text)["ok"] is py_ok, text[:200]
