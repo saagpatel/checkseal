@@ -8,12 +8,36 @@ bytes. The signature covers these exact bytes and nothing else.
 from __future__ import annotations
 
 import base64
+import binascii
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from .model import VCRError, _require
 
 PAYLOAD_TYPE = "application/vnd.in-toto+json"
+
+# Canonical standard base64 (RFC 4648 section 4) with mandatory "=" padding. The
+# JavaScript verifier uses the same pattern plus the same round-trip check.
+_CANONICAL_B64 = re.compile(r"(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?")
+
+
+def b64decode_canonical(value: Any, ctx: str) -> bytes:
+    """Decode canonical padded standard base64, refusing every other spelling.
+
+    Refused: non-string values, whitespace, URL-safe or other non-alphabet
+    characters, missing or excess padding, and non-zero trailing bits. So every
+    byte string has exactly one accepted encoding, in Python and in JavaScript.
+    """
+    _require(isinstance(value, str), f"{ctx}: must be a base64 string")
+    assert isinstance(value, str)
+    _require(_CANONICAL_B64.fullmatch(value) is not None, f"{ctx}: not canonical padded base64")
+    try:
+        data = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:  # pragma: no cover - the pattern already excludes these
+        raise VCRError(f"{ctx}: not valid base64 ({exc})") from exc
+    _require(base64.standard_b64encode(data).decode("ascii") == value, f"{ctx}: non-canonical base64")
+    return data
 
 
 def pae(payload_type: str, payload: bytes) -> bytes:
@@ -58,19 +82,13 @@ class Envelope:
         _require(isinstance(d, dict), "envelope: must be an object")
         pt = d.get("payloadType")
         _require(isinstance(pt, str), "envelope.payloadType: string")
-        try:
-            payload = base64.standard_b64decode(d.get("payload", ""))
-        except (ValueError, TypeError) as exc:
-            raise VCRError(f"envelope.payload: not valid base64 ({exc})") from exc
+        payload = b64decode_canonical(d.get("payload"), "envelope.payload")
         raw_sigs = d.get("signatures")
         _require(isinstance(raw_sigs, list) and len(raw_sigs) > 0, "envelope.signatures: non-empty list")
         sigs: list[Signature] = []
         for i, rs in enumerate(raw_sigs):
             _require(isinstance(rs, dict), f"signatures[{i}]: object")
-            try:
-                sig = base64.standard_b64decode(rs.get("sig", ""))
-            except (ValueError, TypeError) as exc:
-                raise VCRError(f"signatures[{i}].sig: not base64 ({exc})") from exc
+            sig = b64decode_canonical(rs.get("sig"), f"signatures[{i}].sig")
             _require(bool(sig), f"signatures[{i}].sig: empty")
             keyid = rs.get("keyid")
             cert = rs.get("cert")
