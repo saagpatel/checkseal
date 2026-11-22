@@ -278,6 +278,18 @@ def test_envelope_encoding_slack_is_accepted_but_signed_bytes_are_identical() ->
         assert sig == case.envelope.signatures[0].sig, label
 
 
+def test_non_json_whitespace_after_the_envelope_is_refused() -> None:
+    """Flip enumeration finding: str.strip() used to drop bytes 0x0b, 0x0c and
+    0x1c to 0x1f after the envelope, which JSON.parse (and so the browser) refuses.
+    Python now trims only JSON whitespace; a trailing space is still accepted."""
+    case = _canonical_case()
+    for mask in (0x01, 0x06, 0x14, 0x15, 0x16, 0x17):  # newline -> 0x0b 0x0c 0x1e 0x1f 0x1c 0x1d
+        b = bytearray(case.line)
+        b[-1] ^= mask
+        out = verify_line(bytes(b), artifact=case.artifact, case=case)
+        assert not out.accepted, (hex(mask), out.describe())
+
+
 _B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 
