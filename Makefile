@@ -1,7 +1,7 @@
 .PHONY: check
 
 check:
-	@command -v uv >/dev/null || { echo "Install uv 0.13.0." >&2; exit 127; }
+	@command -v uv >/dev/null || { echo "Install uv 0.13.9 or later 0.13.x." >&2; exit 127; }
 	@command -v node >/dev/null || { echo "Install Node.js 26.11.1 or compatible." >&2; exit 127; }
 	@UV_CACHE_DIR="$(CURDIR)/.uv-cache" uv sync --frozen --all-extras
 	@UV_CACHE_DIR="$(CURDIR)/.uv-cache" uv run ruff check src tests
