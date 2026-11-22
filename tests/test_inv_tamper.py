@@ -250,10 +250,10 @@ def _canonical_case() -> SealCase:
 
 
 def test_envelope_encoding_slack_is_accepted_but_signed_bytes_are_identical() -> None:
-    """INV-T9 evidence: concrete one-byte file flips the verifier ACCEPTS.
+    """INV-T9 evidence: concrete one-byte file flips the verifier still ACCEPTS.
 
     Each is a non-issue for the stated claim: the decoded signed bytes (PAE) and
-    the signature bytes are unchanged. Only unsigned encoding changes.
+    the signature bytes are unchanged. Only unsigned framing or hints change.
     """
     case = _canonical_case()
     text = case.line.decode()
@@ -269,14 +269,6 @@ def test_envelope_encoding_slack_is_accepted_but_signed_bytes_are_identical() ->
     b[text.index('"keyid"') + 1] ^= 0x01  # "keyid" -> "jeyid"
     flips.append(("keyid member renamed", bytes(b)))
 
-    # (c) the last signature char before "==" carries 4 ignored bits.
-    sig_b64 = b64(case.envelope.signatures[0].sig)
-    pos = text.index(sig_b64) + len(sig_b64) - 3
-    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-    b = bytearray(case.line)
-    b[pos] = ord(alphabet[alphabet.index(chr(b[pos])) ^ 0b0001])  # low 4 bits are discarded
-    flips.append(("ignored trailing bits in sig base64", bytes(b)))
-
     for label, line in flips:
         assert line != case.line
         out = verify_line(line, artifact=case.artifact, case=case)
@@ -284,6 +276,46 @@ def test_envelope_encoding_slack_is_accepted_but_signed_bytes_are_identical() ->
         signed, sig = _signed_bytes_of(line)
         assert signed == case.envelope.signing_bytes(), label
         assert sig == case.envelope.signatures[0].sig, label
+
+
+def test_non_json_whitespace_after_the_envelope_is_refused() -> None:
+    """Flip enumeration finding: str.strip() used to drop bytes 0x0b, 0x0c and
+    0x1c to 0x1f after the envelope, which JSON.parse (and so the browser) refuses.
+    Python now trims only JSON whitespace; a trailing space is still accepted."""
+    case = _canonical_case()
+    for mask in (0x01, 0x06, 0x14, 0x15, 0x16, 0x17):  # newline -> 0x0b 0x0c 0x1e 0x1f 0x1c 0x1d
+        b = bytearray(case.line)
+        b[-1] ^= mask
+        out = verify_line(bytes(b), artifact=case.artifact, case=case)
+        assert not out.accepted, (hex(mask), out.describe())
+
+
+_B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+
+def _flip_ignored_trailing_bit(line: bytes, b64_text: str) -> bytes:
+    """Change the last data char before "=" padding by its lowest 6-bit value bit,
+    which a lenient decoder discards (so the decoded bytes would be identical)."""
+    assert b64_text.endswith("=")
+    text = line.decode()
+    pos = text.index(b64_text) + len(b64_text.rstrip("=")) - 1
+    b = bytearray(line)
+    b[pos] = ord(_B64_ALPHABET[_B64_ALPHABET.index(chr(b[pos])) ^ 0b000001])
+    return bytes(b)
+
+
+def test_non_canonical_base64_trailing_bits_are_now_refused() -> None:
+    """INV-J7 fix: base64 with non-zero discarded bits used to verify (same bytes);
+    canonical-only decoding now refuses it, in the payload and in the signature."""
+    case = _canonical_case()
+    sig_line = _flip_ignored_trailing_bit(case.line, b64(case.envelope.signatures[0].sig))
+    out = verify_line(sig_line, artifact=case.artifact, case=case)
+    assert not out.accepted and isinstance(out.error, VCRError), out.describe()
+    payload_b64 = b64(case.envelope.payload)
+    if payload_b64.endswith("="):
+        payload_line = _flip_ignored_trailing_bit(case.line, payload_b64)
+        out = verify_line(payload_line, artifact=case.artifact, case=case)
+        assert not out.accepted and isinstance(out.error, VCRError), out.describe()
 
 
 # INV-T10: re-serialization of the envelope -----------------------------------

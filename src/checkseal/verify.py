@@ -126,9 +126,13 @@ class VerificationReport:
 
 
 def load_envelope(seal_path: str) -> Envelope:
-    """Load a T0/T1 .intoto.jsonl seal into a DSSE envelope."""
+    """Load a T0/T1 .intoto.jsonl seal into a DSSE envelope.
+
+    Only JSON whitespace is trimmed from the first line, so the framing accepted
+    here is exactly what JSON.parse accepts in the browser verifier.
+    """
     with open(seal_path, encoding="utf-8") as fh:
-        first = fh.readline().strip()
+        first = fh.readline().strip(" \t\r\n")
     return Envelope.from_jsonable(loads_unique_json(first))
 
 

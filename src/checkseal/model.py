@@ -113,6 +113,36 @@ def _sha256(v: Any, ctx: str) -> str:
     return cast(str, v)
 
 
+_SHA256_CHARS = frozenset("0123456789abcdef")
+
+
+def _sha256_exact(v: Any, ctx: str) -> str:
+    """Schema form of a digest: exactly 64 lowercase hex chars, no normalization."""
+    _require(
+        isinstance(v, str) and len(v) == _SHA256_LEN and all(c in _SHA256_CHARS for c in v),
+        f"{ctx}: not a lowercase 64-hex sha256",
+    )
+    return cast(str, v)
+
+
+def _members(
+    d: Any, ctx: str, *, required: tuple[str, ...], optional: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """Enforce the schema's ``required`` list and ``additionalProperties: false``."""
+    _require(isinstance(d, dict), f"{ctx}: must be an object")
+    assert isinstance(d, dict)
+    missing = [k for k in required if k not in d]
+    _require(not missing, f"{ctx}: missing required member(s) {missing}")
+    extra = sorted(set(d) - set(required) - set(optional))
+    _require(not extra, f"{ctx}: unknown member(s) {extra}")
+    return d
+
+
+def _digest_set(d: Any, ctx: str) -> str:
+    """``$defs/sha256``: an object with exactly one member, ``sha256``."""
+    return _sha256_exact(_members(d, ctx, required=("sha256",))["sha256"], ctx)
+
+
 def _str(v: Any, ctx: str, *, max_len: int | None = None) -> str:
     _require(isinstance(v, str), f"{ctx}: must be a string")
     assert isinstance(v, str)
@@ -155,15 +185,15 @@ class Subject:
     @staticmethod
     def from_jsonable(d: Any) -> Subject:
         _require(isinstance(d, dict), "subject: must be an object")
-        digest = d.get("digest")
-        _require(isinstance(digest, dict), "subject.digest: must be an object")
-        mt = d.get("mediaType")
-        if mt is not None:
-            mt = _str(mt, "subject.mediaType")
+        missing = [k for k in ("kind", "digest", "name") if k not in d]
+        _require(not missing, f"subject: missing required member(s) {missing}")
+        # The schema's subject object sets no additionalProperties, so unknown
+        # members are allowed here (and only here).
+        mt = _str(d["mediaType"], "subject.mediaType") if "mediaType" in d else None
         return Subject(
-            kind=parse_subject_kind(d.get("kind")),
-            digest=_sha256(digest.get("sha256"), "subject.digest"),
-            name=_str(d.get("name"), "subject.name", max_len=256),
+            kind=parse_subject_kind(d["kind"]),
+            digest=_digest_set(d["digest"], "subject.digest"),
+            name=_str(d["name"], "subject.name", max_len=256),
             media_type=mt,
         )
 
@@ -183,18 +213,14 @@ class Check:
 
     @staticmethod
     def from_jsonable(d: Any) -> Check:
-        _require(isinstance(d, dict), "check: must be an object")
-        cid = _str(d.get("id"), "check.id")
+        d = _members(d, "check", required=("id", "kind", "version"), optional=("config_ref",))
+        cid = _str(d["id"], "check.id")
         _require(_valid_check_id(cid), f"check.id: {cid!r} violates ^[a-z0-9]+(/[a-z0-9-]+)*$")
-        cfg = d.get("config_ref")
-        config_ref = None
-        if cfg is not None:
-            _require(isinstance(cfg, dict), "check.config_ref: must be an object")
-            config_ref = _sha256(cfg.get("sha256"), "check.config_ref")
+        config_ref = _digest_set(d["config_ref"], "check.config_ref") if "config_ref" in d else None
         return Check(
             id=cid,
-            kind=CheckKind(_str(d.get("kind"), "check.kind")),
-            version=_str(d.get("version"), "check.version"),
+            kind=CheckKind(_str(d["kind"], "check.kind")),
+            version=_str(d["version"], "check.version"),
             config_ref=config_ref,
         )
 
@@ -217,10 +243,10 @@ class EnforcedProof:
 
     @staticmethod
     def from_jsonable(d: Any) -> EnforcedProof:
-        _require(isinstance(d, dict), "enforced_proof: must be an object")
+        d = _members(d, "enforced_proof", required=("sha256", "uri"))
         return EnforcedProof(
-            sha256=_sha256(d.get("sha256"), "enforced_proof"),
-            uri=_str(d.get("uri"), "enforced_proof.uri"),
+            sha256=_sha256_exact(d["sha256"], "enforced_proof"),
+            uri=_str(d["uri"], "enforced_proof.uri"),
         )
 
 
@@ -238,12 +264,12 @@ class Verdict:
 
     @staticmethod
     def from_jsonable(d: Any) -> Verdict:
-        _require(isinstance(d, dict), "verdict: must be an object")
-        ep = d.get("enforced_proof")
+        d = _members(d, "verdict", required=("result", "enforced"), optional=("enforced_proof",))
+        ep = EnforcedProof.from_jsonable(d["enforced_proof"]) if "enforced_proof" in d else None
         return Verdict(
-            result=Result(_str(d.get("result"), "verdict.result")),
-            enforced=Enforced(_str(d.get("enforced"), "verdict.enforced")),
-            enforced_proof=EnforcedProof.from_jsonable(ep) if ep is not None else None,
+            result=Result(_str(d["result"], "verdict.result")),
+            enforced=Enforced(_str(d["enforced"], "verdict.enforced")),
+            enforced_proof=ep,
         )
 
 
@@ -266,18 +292,14 @@ class Evidence:
 
     @staticmethod
     def from_jsonable(d: Any) -> Evidence:
-        _require(isinstance(d, dict), "evidence: must be an object")
-        _require("inline" not in d, "evidence.inline is forbidden under the N1 profile")
-        digest = d.get("digest")
-        _require(isinstance(digest, dict), "evidence.digest: mandatory object")
-        uri = d.get("uri")
-        if uri is not None:
-            uri = _str(uri, "evidence.uri")
+        inline = isinstance(d, dict) and "inline" in d
+        _require(not inline, "evidence.inline is forbidden under the N1 profile")
+        d = _members(d, "evidence", required=("kind", "grade", "digest"), optional=("uri",))
         return Evidence(
-            kind=EvidenceKind(_str(d.get("kind"), "evidence.kind")),
-            grade=Grade(_str(d.get("grade"), "evidence.grade")),
-            digest=_sha256(digest.get("sha256"), "evidence.digest"),
-            uri=uri,
+            kind=EvidenceKind(_str(d["kind"], "evidence.kind")),
+            grade=Grade(_str(d["grade"], "evidence.grade")),
+            digest=_digest_set(d["digest"], "evidence.digest"),
+            uri=_str(d["uri"], "evidence.uri") if "uri" in d else None,
         )
 
 
@@ -298,21 +320,20 @@ class Runtime:
 
     @staticmethod
     def from_jsonable(d: Any) -> Runtime:
-        _require(isinstance(d, dict), "runtime: must be an object")
-        dur = d.get("duration_ms")
-        if dur is not None:
-            _require(
-                isinstance(dur, int) and not isinstance(dur, bool) and dur >= 0,
-                "runtime.duration_ms: non-negative int",
+        d = _members(d, "runtime", required=("ran_at", "runner"), optional=("duration_ms", "env_digest"))
+        dur: int | None = None
+        if "duration_ms" in d:
+            raw = d["duration_ms"]
+            # JSON Schema "integer" is a number with no fractional part, so 5.0 qualifies.
+            integral = (isinstance(raw, int) and not isinstance(raw, bool)) or (
+                isinstance(raw, float) and raw.is_integer()
             )
-        env = d.get("env_digest")
-        env_digest = None
-        if env is not None:
-            _require(isinstance(env, dict), "runtime.env_digest: object")
-            env_digest = _sha256(env.get("sha256"), "runtime.env_digest")
+            _require(integral and raw >= 0, "runtime.duration_ms: non-negative int")
+            dur = int(raw)
+        env_digest = _digest_set(d["env_digest"], "runtime.env_digest") if "env_digest" in d else None
         return Runtime(
-            ran_at=_str(d.get("ran_at"), "runtime.ran_at"),
-            runner=Runner(_str(d.get("runner"), "runtime.runner")),
+            ran_at=_str(d["ran_at"], "runtime.ran_at"),
+            runner=Runner(_str(d["runner"], "runtime.runner")),
             duration_ms=dur,
             env_digest=env_digest,
         )
@@ -332,12 +353,11 @@ class Provenance:
 
     @staticmethod
     def from_jsonable(d: Any) -> Provenance:
-        _require(isinstance(d, dict), "provenance: must be an object")
-        ib = d.get("instruction_boundary")
-        _require(isinstance(ib, dict), "provenance.instruction_boundary: object")
+        d = _members(d, "provenance", required=("authority", "instruction_boundary"))
+        ib = _members(d["instruction_boundary"], "provenance.instruction_boundary", required=("kind",))
         return Provenance(
-            authority=Authority(_str(d.get("authority"), "provenance.authority")),
-            instruction_boundary_kind=_str(ib.get("kind"), "instruction_boundary.kind"),
+            authority=Authority(_str(d["authority"], "provenance.authority")),
+            instruction_boundary_kind=_str(ib["kind"], "instruction_boundary.kind"),
         )
 
 
@@ -368,13 +388,13 @@ class CheckEntry:
 
     @staticmethod
     def from_jsonable(d: Any) -> CheckEntry:
-        _require(isinstance(d, dict), "check entry: must be an object")
+        d = _members(d, "check entry", required=("check", "verdict", "evidence", "runtime", "provenance"))
         return CheckEntry(
-            check=Check.from_jsonable(d.get("check")),
-            verdict=Verdict.from_jsonable(d.get("verdict")),
-            evidence=Evidence.from_jsonable(d.get("evidence")),
-            runtime=Runtime.from_jsonable(d.get("runtime")),
-            provenance=Provenance.from_jsonable(d.get("provenance")),
+            check=Check.from_jsonable(d["check"]),
+            verdict=Verdict.from_jsonable(d["verdict"]),
+            evidence=Evidence.from_jsonable(d["evidence"]),
+            runtime=Runtime.from_jsonable(d["runtime"]),
+            provenance=Provenance.from_jsonable(d["provenance"]),
         )
 
 
@@ -395,13 +415,13 @@ class Predicate:
 
     @staticmethod
     def from_jsonable(d: Any) -> Predicate:
-        _require(isinstance(d, dict), "predicate: must be an object")
-        checks = d.get("checks")
+        d = _members(d, "predicate", required=("vcr_version", "subject", "checks"))
+        checks = d["checks"]
         _require(isinstance(checks, list) and len(checks) >= 1, "predicate.checks: non-empty list")
-        version = _str(d.get("vcr_version", VCR_VERSION), "vcr_version")
+        version = _str(d["vcr_version"], "vcr_version")
         _require(version == VCR_VERSION, f"vcr_version must be {VCR_VERSION!r}")
         return Predicate(
-            subject=Subject.from_jsonable(d.get("subject")),
+            subject=Subject.from_jsonable(d["subject"]),
             checks=[CheckEntry.from_jsonable(c) for c in checks],
             vcr_version=version,
         )

@@ -11,7 +11,15 @@ import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
 
-from _invariant_support import SIGNER, envelope_line, resign, seal_cases, verify_line
+from _invariant_support import (
+    SIGNER,
+    envelope_line,
+    mutated_statements,
+    resign,
+    seal_cases,
+    statement_oracle,
+    verify_line,
+)
 from checkseal.digest import canonical_bytes, sha256_hex
 from checkseal.dsse import pae
 from checkseal.json_utils import loads_unique_json
@@ -161,6 +169,15 @@ def test_unique_json_rejects_exactly_the_texts_with_duplicate_members(sample: tu
 
 _VALID = json.loads((Path(__file__).parent / "fixtures" / "schema" / "valid-statement.json").read_text())
 
+# Pinned INV-S4 counterexamples (each used to parse; the schema rejects all three).
+_without_vcr_version = copy.deepcopy(_VALID)
+del _without_vcr_version["predicate"]["vcr_version"]
+_with_extra_predicate_member = copy.deepcopy(_VALID)
+_with_extra_predicate_member["predicate"]["unsigned_looking"] = True
+_with_uppercase_predicate_digest = copy.deepcopy(_VALID)
+_with_uppercase_predicate_digest["predicate"]["subject"]["digest"]["sha256"] = " " + "A" * 64
+_with_uppercase_predicate_digest["subject"][0]["digest"]["sha256"] = "a" * 64
+
 
 def _rejected_mutations() -> list[tuple[str, Any]]:
     """Schema violations the parser does refuse (each one breaks a schema rule)."""
@@ -203,66 +220,36 @@ def test_parser_refuses_type_enum_pattern_and_range_violations(mutation: tuple[s
         parse_statement(statement)
 
 
-def _lenient(name: str) -> tuple[str, Any]:
-    def drop_version(s: dict[str, Any]) -> None:
-        del s["predicate"]["vcr_version"]
-
-    def extra_predicate_member(s: dict[str, Any]) -> None:
-        s["predicate"]["unsigned_looking"] = True
-
-    def extra_check_member(s: dict[str, Any]) -> None:
-        s["predicate"]["checks"][0]["check"]["note"] = "x"
-
-    def upper_digest(s: dict[str, Any]) -> None:
-        d = s["predicate"]["subject"]["digest"]["sha256"]
-        s["predicate"]["subject"]["digest"]["sha256"] = " " + d.upper()
-
-    table = {
-        "vcr_version omitted": drop_version,
-        "extra predicate member": extra_predicate_member,
-        "extra check member": extra_check_member,
-        "predicate digest uppercased with leading space": upper_digest,
-    }
-    return name, table[name]
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "BROKEN INV-S4: parse_statement accepts Statements the vendored schema rejects. "
-        "Minimal counterexample: the shared valid fixture with predicate.vcr_version deleted "
-        "(schema: required). Also accepted: unknown members under additionalProperties:false, "
-        'and a predicate digest of " " + UPPERCASE hex (model._sha256 strips and lowercases).'
-    ),
-)
-@given(
-    st.sampled_from(
-        [
-            "vcr_version omitted",
-            "extra predicate member",
-            "extra check member",
-            "predicate digest uppercased with leading space",
-        ]
-    ).map(_lenient)
-)
-@example(_lenient("vcr_version omitted"))
-def test_parser_refuses_every_schema_invalid_statement(mutation: tuple[str, Any]) -> None:
-    statement = copy.deepcopy(_VALID)
-    mutation[1](statement)
+@given(mutated_statements(_VALID))
+@example(_without_vcr_version)
+@example(_with_extra_predicate_member)
+@example(_with_uppercase_predicate_digest)
+def test_parser_accepts_a_statement_iff_the_schema_does(statement: dict[str, Any]) -> None:
+    """INV-S4: parse_statement accepts exactly the Statements the vendored schema
+    (plus the documented in-toto Statement rules) accepts."""
+    expected = statement_oracle(statement)
     try:
         parse_statement(statement)
-    except VCRError:
-        return
-    raise AssertionError(f"schema-invalid Statement accepted: {mutation[0]}")
+        accepted = True
+    except ValueError:
+        accepted = False
+    assert accepted is expected, json.dumps(statement)
 
 
-def test_schema_leniency_survives_signing_and_verification() -> None:
-    """INV-S4 evidence: the leniency reaches the verdict, not just the parser.
+@given(seal_cases(max_checks=2).flatmap(lambda c: mutated_statements(build_statement(c.predicate))))
+def test_parser_agrees_with_the_schema_on_mutated_real_statements(statement: dict[str, Any]) -> None:
+    expected = statement_oracle(statement)
+    try:
+        parse_statement(statement)
+        accepted = True
+    except ValueError:
+        accepted = False
+    assert accepted is expected, json.dumps(statement)
 
-    A trusted-key-signed Statement without vcr_version verifies authentic. This
-    needs the signer's key, so it is a conformance gap, not a tamper path.
-    """
+
+def test_schema_invalid_statement_is_refused_even_when_signed() -> None:
+    """INV-S4 at the verdict: a trusted-key-signed Statement without vcr_version
+    used to verify authentic; it is now refused before any signature work."""
     from checkseal.model import Enforced, EvidenceKind, Grade
     from conftest import make_entry, make_subject
 
@@ -274,4 +261,5 @@ def test_schema_leniency_survives_signing_and_verification() -> None:
     del statement["predicate"]["vcr_version"]
     line = envelope_line(resign(canonical_bytes(statement), SIGNER))
     out = verify_line(line, artifact=artifact)
-    assert out.accepted, out.describe()
+    assert not out.accepted
+    assert isinstance(out.error, VCRError) and "vcr_version" in str(out.error)
